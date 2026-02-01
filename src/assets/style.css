@@ -1,0 +1,309 @@
+/* src/assets/style.css */
+
+/* --- 1. 变量系统 (Theming System) --- */
+:root {
+    /* 核心布局变量 */
+    --ios-radius: 40px;
+    --apple-ease: cubic-bezier(0.32, 0.725, 0, 1);
+    --card-width: 700px;
+    --card-gap: 60px;
+    --ios-blue: #007aff;
+    
+    /* === Light Mode (默认) === */
+    --app-bg: #f0f2f5;
+    
+    /* 玻璃卡片 */
+    --glass-bg: rgba(255, 255, 255, 0.65);
+    --glass-border: rgba(255, 255, 255, 0.4);
+    --glass-shadow: 0 20px 60px rgba(0,0,0,0.05);
+    
+    /* 文字颜色 */
+    --text-main: #1d1d1f;
+    --text-sec: #86868b;
+    --text-inverse: #ffffff; /* 反色文本 */
+    
+    /* 交互组件 */
+    --input-bg: rgba(255,255,255,0.5);
+    --item-hover: #f5f5f7;
+    --modal-overlay: rgba(240, 242, 245, 0.6);
+}
+
+/* === Dark Mode (深色模式) === */
+[data-theme="dark"] {
+    --app-bg: #050505; /* 纯黑背景 */
+    
+    /* 深色玻璃 (关键：降低透明度，增加一点点灰度) */
+    --glass-bg: rgba(30, 30, 30, 0.60); 
+    --glass-border: rgba(255, 255, 255, 0.1); /* 边框变细微亮 */
+    --glass-shadow: 0 20px 60px rgba(0,0,0,0.4); /* 阴影加重 */
+    
+    /* 文字颜色 */
+    --text-main: #f5f5f7; /* 接近白 */
+    --text-sec: #a1a1a6;  /* 浅灰 */
+    --text-inverse: #000000;
+    
+    /* 交互组件 */
+    --input-bg: rgba(0,0,0,0.3);
+    --item-hover: rgba(255,255,255,0.1);
+    --modal-overlay: rgba(0, 0, 0, 0.7);
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+    :root { --card-width: 92vw; --card-gap: 20px; --ios-radius: 30px; }
+}
+
+/* --- 2. 动画库 (保持不变) --- */
+@keyframes jelly {
+    0%, 100% { transform: scale(1, 1); }
+    30% { transform: scale(1.15, 0.85); }
+    40% { transform: scale(0.90, 1.10); }
+    50% { transform: scale(1.05, 0.95); }
+    65% { transform: scale(0.98, 1.02); }
+}
+@keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
+@keyframes float { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(30px, 40px); } }
+@keyframes popIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+
+/* --- 3. 全局重置 --- */
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; user-select: none; }
+input, textarea { user-select: auto !important; -webkit-user-select: auto !important; }
+ul, li { list-style: none; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    color: var(--text-main);
+    min-height: 100vh;
+    background: var(--app-bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
+    transition: background 0.5s ease;
+}
+
+/* [新增] 搜索高亮关键词样式 */
+.highlight-text {
+    color: var(--ios-blue);
+    font-weight: 800;
+    background: rgba(0, 122, 255, 0.1);
+    border-radius: 4px;
+    padding: 0 2px;
+}
+
+/* 背景光斑 (深色模式下稍微减弱亮度) */
+.ambient-light, .ambient-light-2 {
+    position: fixed; width: 800px; height: 800px; z-index: -1; filter: blur(80px);
+    transition: opacity 0.5s;
+}
+[data-theme="dark"] .ambient-light, [data-theme="dark"] .ambient-light-2 {
+    opacity: 0.4; /* 变暗 */
+}
+.ambient-light {
+    top: -200px; left: -200px;
+    background: radial-gradient(circle, rgba(184,212,248,0.5) 0%, rgba(160,200,240,0) 70%);
+    animation: float 10s infinite ease-in-out;
+}
+.ambient-light-2 {
+    width: 600px; height: 600px; bottom: -100px; right: -100px;
+    background: radial-gradient(circle, rgba(212,220,230,0.4) 0%, rgba(192,208,224,0) 70%);
+    animation: float 12s infinite ease-in-out reverse;
+}
+
+/* --- 4. 核心布局 --- */
+.page-mask { width: 100vw; height: 100vh; display: flex; align-items: center; position: relative; z-index: 5; cursor: grab; touch-action: none; }
+.page-mask:active { cursor: grabbing; }
+
+.page-track { display: flex; align-items: center; gap: var(--card-gap); transition: transform 0.8s var(--apple-ease); will-change: transform; }
+.page-section { width: var(--card-width); flex-shrink: 0; padding: 60px; transition: all 0.6s var(--apple-ease); }
+.page-section.inactive { opacity: 0.4; transform: scale(0.8); filter: blur(10px); pointer-events: none; }
+
+/* --- 5. 通用卡片 (Glass Card) --- */
+.glass-card, .auth-card {
+    background: var(--glass-bg); /* 变量 */
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border: 1px solid var(--glass-border); /* 变量 */
+    border-radius: var(--ios-radius);
+    box-shadow: var(--glass-shadow); /* 变量 */
+    display: flex; flex-direction: column;
+    position: relative; overflow: hidden;
+    transition: all 0.4s var(--apple-ease);
+}
+
+.glass-card { width: 100%; height: 80vh; max-height: 850px; min-height: 600px; padding: 50px; }
+
+/* 悬停效果 */
+@media (hover: hover) {
+    .glass-card:hover, .auth-card:hover {
+        transform: translateY(-10px) scale(1.01);
+        /* 深色模式下光晕改为深色 */
+        box-shadow: 0 40px 80px rgba(0,0,0,0.2); 
+    }
+}
+
+/* --- 6. Basics Card (Gallery) --- */
+.basics-card { justify-content: center; }
+.basics-card .gallery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; }
+.gallery-item { display: flex; flex-direction: column; gap: 12px; align-items: center; text-align: center; cursor: pointer; transform-origin: center; }
+.gallery-item:hover { animation: jelly 0.6s; }
+
+.image-wrapper {
+    width: 100%; aspect-ratio: 1/1; border-radius: 24px;
+    background: var(--input-bg); /* 变量 */
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: inset 0 0 0 1px var(--glass-border);
+    overflow: hidden;
+}
+.image-wrapper img { width: 65%; height: 65%; object-fit: contain; transition: transform 0.5s var(--apple-ease); }
+.gallery-item:hover img { transform: scale(1.15); }
+.item-title { font-size: 1.1rem; font-weight: 600; opacity: 0.9; color: var(--text-main); }
+@media (max-width: 768px) { .basics-card .gallery-grid { grid-template-columns: repeat(2, 1fr); gap: 20px; } }
+
+/* --- 7. Cases Card --- */
+.cases-layout { display: flex; flex-direction: column; height: 100%; }
+.cases-header-fixed { flex-shrink: 0; padding: 50px 50px 20px 50px; }
+.cases-header-fixed h1 { font-size: 2rem; font-weight: 700; margin-bottom: 20px; color: var(--text-main); }
+
+.search-bar {
+    position: relative; width: 100%;
+    background: var(--input-bg); /* 变量 */
+    border-radius: 16px; padding: 12px 20px 12px 46px;
+    display: flex; align-items: center;
+    border: 1px solid var(--glass-border); transition: background 0.3s;
+}
+.search-bar:focus-within { background: rgba(255,255,255,0.1); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+.search-icon { position: absolute; left: 16px; opacity: 0.4; font-size: 1.1rem; color: var(--text-main); }
+.search-input { background: transparent; border: none; outline: none; width: 100%; font-size: 1rem; color: var(--text-main); }
+
+.cases-scroll-area { flex: 1; overflow-y: auto; padding: 0 50px 50px 50px; scrollbar-width: none; }
+.cases-scroll-area::-webkit-scrollbar { display: none; }
+
+.section-title { font-size: 1.1rem; font-weight: 600; color: var(--text-sec); margin: 25px 0 15px 0; }
+
+.highlight-card {
+    background: var(--glass-bg); /* 让它也跟随玻璃色，或者给个特定色 */
+    border: 1px solid var(--glass-border);
+    border-radius: 24px; padding: 24px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.03);
+    position: relative; overflow: hidden; cursor: pointer; transition: transform 0.3s;
+}
+/* 深色模式下高亮卡片的背景微调 */
+[data-theme="dark"] .highlight-card { background: rgba(40,40,40,0.5); }
+.highlight-card:hover { transform: scale(1.02); }
+.highlight-bg {
+    position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
+    background: radial-gradient(circle, rgba(0, 122, 255, 0.08) 0%, rgba(255,255,255,0) 70%);
+    pointer-events: none;
+}
+.card-top { display: flex; justify-content: space-between; margin-bottom: 12px; }
+.card-h1 { font-size: 1.4rem; font-weight: 700; color: var(--text-main); }
+.card-time { font-size: 0.85rem; color: var(--text-sec); }
+.card-desc { font-size: 0.95rem; line-height: 1.5; color: var(--text-sec); }
+
+.recent-list { display: flex; flex-direction: column; gap: 12px; }
+.list-item {
+    background: var(--glass-bg); /* 跟随主题 */
+    border: 1px solid transparent;
+    padding: 18px 20px; border-radius: 18px;
+    display: flex; justify-content: space-between; align-items: center;
+    cursor: pointer; transition: all 0.2s;
+}
+[data-theme="dark"] .list-item { background: rgba(255,255,255,0.05); }
+
+.list-item:hover { background: var(--item-hover); transform: translateX(5px); }
+.list-info h4 { font-size: 1rem; font-weight: 600; margin-bottom: 4px; color: var(--text-main); }
+.list-info p { font-size: 0.85rem; color: var(--text-sec); }
+.list-meta { text-align: right; }
+.meta-time { font-size: 0.8rem; color: var(--text-sec); display: block; margin-bottom: 4px; }
+.arrow-icon { opacity: 0.2; font-size: 1.2rem; color: var(--text-main); }
+.no-results { text-align: center; padding: 60px 20px; color: var(--text-sec); font-size: 1.1rem; opacity: 0.6; }
+
+/* --- 8. 底部 UI --- */
+.bottom-nav {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%) translateY(120px);
+    background: var(--glass-bg); backdrop-filter: blur(20px);
+    padding: 6px; border-radius: 100px; border: 1px solid var(--glass-border);
+    display: inline-flex; box-shadow: var(--glass-shadow); z-index: 100;
+    transition: all 0.6s var(--apple-ease); opacity: 0;
+}
+.bottom-nav.visible { transform: translateX(-50%) translateY(0); opacity: 1; }
+.nav-indicator {
+    position: absolute; top: 6px; left: 6px; height: calc(100% - 12px);
+    background: var(--ios-blue); border-radius: 100px;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+    transition: all 0.4s var(--apple-ease); z-index: 1;
+}
+.nav-indicator.animate-jelly { animation: jelly 0.5s; }
+.nav-item { position: relative; z-index: 2; padding: 10px 32px; font-size: 0.9rem; font-weight: 600; color: #86868b; cursor: pointer; transition: color 0.3s; }
+.nav-item.active { color: #fff; }
+
+/* 头部 Header 容器 (新) */
+.header-bar {
+    position: absolute; top: 40px; left: 40px;
+    display: flex; align-items: center; gap: 16px; /* Profile 和 Toggle 的间距 */
+    z-index: 20;
+}
+
+/* User Profile (修改定位方式) */
+.user-profile {
+    position: relative; /* 移除之前的 absolute */
+    top: auto; left: auto;
+    display: flex; align-items: center; gap: 12px;
+    background: var(--glass-bg); padding: 8px 16px; border-radius: 50px;
+    cursor: pointer; transition: background 0.3s;
+    border: 1px solid var(--glass-border);
+}
+.user-profile:hover { animation: bounce 0.8s; background: var(--item-hover); }
+.avatar { width: 40px; height: 40px; border-radius: 50%; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.username { font-weight: 600; font-size: 0.95rem; color: var(--text-main); }
+.status-badge { font-size: 0.75rem; background: rgba(0,0,0,0.05); padding: 2px 8px; border-radius: 8px; color: var(--ios-blue); }
+[data-theme="dark"] .status-badge { background: rgba(255,255,255,0.1); }
+
+/* FAB */
+.fab-add {
+    position: fixed; bottom: 40px; right: 40px;
+    width: 54px; height: 54px; background: var(--text-main); border-radius: 50%;
+    color: var(--app-bg); /* 反色 */
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px; cursor: pointer; z-index: 100; transition: transform 0.2s;
+}
+.fab-add:hover { transform: scale(1.1) rotate(90deg); }
+
+/* --- 9. Auth Overlay --- */
+.auth-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999;
+    background: var(--modal-overlay); backdrop-filter: blur(60px) saturate(200%);
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity 0.5s ease, visibility 0.5s ease;
+}
+.auth-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+.auth-overlay.hidden .auth-card { transform: translateY(60px); }
+
+.auth-card { width: 360px; padding: 45px 35px; border-radius: 35px; text-align: center; align-items: center; gap: 24px; }
+.auth-card.shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
+.auth-title { font-size: 1.2rem; color: var(--text-sec); font-weight: 500; }
+.auth-identity .avatar { width: 70px; height: 70px; border: 3px solid var(--glass-border); margin: 0 auto 10px; }
+.auth-identity .name { font-size: 1.6rem; font-weight: 700; color: var(--text-main); }
+
+.auth-input {
+    width: 100%; padding: 15px; border-radius: 18px;
+    border: 1px solid var(--glass-border); background: var(--input-bg);
+    font-size: 1.1rem; text-align: center; outline: none; transition: all 0.3s;
+    color: var(--text-main);
+}
+.auth-input:focus { background: var(--glass-bg); box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.1); }
+
+.auth-actions { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+.btn-confirm {
+    background: var(--text-main); color: var(--app-bg); border: none; padding: 12px 28px; border-radius: 25px;
+    font-weight: 600; cursor: pointer; transition: all 0.3s;
+}
+.btn-confirm:hover { background: var(--ios-blue); color: #fff; transform: scale(1.05); }
+.btn-link { background: none; border: none; color: var(--text-sec); cursor: pointer; font-size: 0.9rem; }
+.btn-link:hover { color: var(--text-main); text-decoration: underline; }
+
+/* Case Modal 样式修正 (删除确认框) */
+.delete-confirm-overlay { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(10px); color: #000; }
+[data-theme="dark"] .delete-confirm-overlay { background: rgba(30, 30, 30, 0.85); color: #fff; }
+.confirm-box h3 { color: inherit; }
