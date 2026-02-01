@@ -5,13 +5,36 @@ const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const createDOMPurify = require('dompurify');
 const { JSDOM } = require('jsdom');
-const logger = require('./logger'); // [新增] 引入日志工具
-require('dotenv').config();
+const logger = require('./logger'); 
+require('dotenv').config(); // 必须最先加载
+
+// --- [核心优化] 启动前安检 ---
+const requiredEnv = ['JWT_SECRET', 'ADMIN_PASSWORD'];
+const missingEnv = requiredEnv.filter(key => !process.env[key]);
+
+if (missingEnv.length > 0) {
+  // 使用 console.error 确保即使 logger 挂了也能看到报错
+  console.error(`
+  ==================================================
+  [CRITICAL ERROR] Missing Environment Variables!
+  --------------------------------------------------
+  The following variables are required but missing:
+  ${missingEnv.map(e => `  - ${e}`).join('\n')}
+  
+  Please create a .env file based on .env.example
+  or configure them in your server panel.
+  
+  Server is shutting down...
+  ==================================================
+  `);
+  process.exit(1); // 强制退出，返回错误码 1
+}
 
 const app = express();
+// 只有通过了安检，才赋值给常量
 const PORT = process.env.PORT || 3001;
-const SECRET_KEY = process.env.JWT_SECRET || 'PLEASE_CHANGE_THIS_SECRET_IN_ENV';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '123456';
+const SECRET_KEY = process.env.JWT_SECRET;     // 不再有 fallback
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD; // 不再有 fallback
 
 const window = new JSDOM('').window;
 const DOMPurify = createDOMPurify(window);
