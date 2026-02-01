@@ -6,18 +6,28 @@ import BasicsCard from './components/BasicsCard.vue'
 import CasesCard from './components/CasesCard.vue'
 import CaseModal from './components/CaseModal.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
-import KnowledgeCard from './components/KnowledgeCard.vue' 
-import api from './services/api' // [新增] 引入 API 模块
+import KnowledgeCard from './components/KnowledgeCard.vue'
+import Toast from './components/Toast.vue' // [新增 1]
+import api from './services/api'
+import { showToast } from './utils/toast' // [新增 2]
 
+// ... (原有变量保持不变) ...
 const authMode = ref('locked')
 const showOverlay = ref(true)
-const currentTab = ref('basics') 
+const currentTab = ref('basics')
 const navIndicatorStyle = ref({ width: '0px', left: '0px' })
 const isJelly = ref(false)
 const isDark = ref(false)
-
-const cardOriginRect = ref(null)      
-const caseModalOriginRect = ref(null) 
+const casesData = ref([])
+const showCaseModal = ref(false)
+const modalMode = ref('view')
+const currentCase = ref(null) 
+const showKnowledge = ref(false)
+const currentKnowledgeItem = ref({})
+const navRefBasics = ref(null)
+const navRefCases = ref(null)
+const cardOriginRect = ref(null)
+const caseModalOriginRect = ref(null)
 
 const knowledgeItems = ref([
   { title: 'Linux', img: '/img/linux.png' },
@@ -30,150 +40,90 @@ const knowledgeItems = ref([
   { title: 'ITIL', img: '/img/people.png' }
 ])
 
-// 数据源
-const casesData = ref([])
+const toggleTheme = () => { isDark.value = !isDark.value }
+watch(isDark, (val) => { if (val) document.body.setAttribute('data-theme', 'dark'); else document.body.removeAttribute('data-theme') })
 
-// [重构] 加载 Cases 数据
+// ... (其他原有函数保持不变: handleUnlock, switchTab, updateNavIndicator, etc.) ...
+const handleUnlock = (mode) => { authMode.value = mode; showOverlay.value = false; if (mode === 'guest') switchTab('basics'); else if (mode === 'admin') switchTab('cases') }
+const switchTab = (tab) => { currentTab.value = tab; isJelly.value = false; nextTick(() => { isJelly.value = true; setTimeout(() => isJelly.value = false, 500); updateNavIndicator() }) }
+const updateNavIndicator = () => { const target = currentTab.value === 'basics' ? navRefBasics.value : navRefCases.value; if (target) { navIndicatorStyle.value = { width: `${target.offsetWidth}px`, left: `${target.offsetLeft}px` } } }
+const openKnowledgeCard = ({ item, rect }) => { currentKnowledgeItem.value = item; cardOriginRect.value = rect; showKnowledge.value = true }
+const switchKnowledgeItem = (newItem) => { currentKnowledgeItem.value = newItem }
+const openCreateModal = (event) => { if (event && event.currentTarget) { caseModalOriginRect.value = event.currentTarget.getBoundingClientRect() } modalMode.value = 'create'; currentCase.value = null; showCaseModal.value = true }
+const openViewModal = ({ item, rect }) => { caseModalOriginRect.value = rect; modalMode.value = 'view'; currentCase.value = item; showCaseModal.value = true }
+const handleAction = (action) => { if (action === 'switch-case') switchTab('cases') }
+const startX = ref(0)
+const onPointerDown = (e) => { startX.value = e.clientX }
+const onPointerUp = (e) => { const diff = e.clientX - startX.value; if (diff < -80) switchTab('cases'); if (diff > 80) switchTab('basics') }
+
 const loadCases = async () => {
   try {
     const data = await api.getCases()
     casesData.value = data
   } catch (e) {
-    console.error('加载工单失败:', e)
+    console.error('加载失败', e)
+    // showToast('Failed to load cases', 'error') // 可选
   }
 }
 
-const showCaseModal = ref(false)
-const modalMode = ref('view')
-const currentCase = ref(null) 
-const showKnowledge = ref(false)
-const currentKnowledgeItem = ref({})
-
-const navRefBasics = ref(null)
-const navRefCases = ref(null)
-
-const toggleTheme = () => { isDark.value = !isDark.value }
-watch(isDark, (val) => {
-  if (val) document.body.setAttribute('data-theme', 'dark')
-  else document.body.removeAttribute('data-theme')
-})
-
-const handleUnlock = (mode) => {
-  authMode.value = mode
-  showOverlay.value = false
-  if (mode === 'guest') switchTab('basics')
-  else if (mode === 'admin') switchTab('cases')
-}
-
-const switchTab = (tab) => {
-  currentTab.value = tab
-  isJelly.value = false
-  nextTick(() => {
-    isJelly.value = true
-    setTimeout(() => isJelly.value = false, 500)
-    updateNavIndicator()
-  })
-}
-
-const updateNavIndicator = () => {
-  const target = currentTab.value === 'basics' ? navRefBasics.value : navRefCases.value
-  if (target) {
-    navIndicatorStyle.value = { width: `${target.offsetWidth}px`, left: `${target.offsetLeft}px` }
-  }
-}
-
-const openKnowledgeCard = ({ item, rect }) => {
-  currentKnowledgeItem.value = item
-  cardOriginRect.value = rect 
-  showKnowledge.value = true
-}
-
-const switchKnowledgeItem = (newItem) => { currentKnowledgeItem.value = newItem }
-
-const openCreateModal = (event) => {
-  if (event && event.currentTarget) {
-    caseModalOriginRect.value = event.currentTarget.getBoundingClientRect()
-  }
-  modalMode.value = 'create'
-  currentCase.value = null
-  showCaseModal.value = true
-}
-
-const openViewModal = ({ item, rect }) => {
-  caseModalOriginRect.value = rect
-  modalMode.value = 'view'
-  currentCase.value = item
-  showCaseModal.value = true
-}
-
-// [重构] 新增工单
+// [修改 3] 新增工单 + 提示
 const handleCreateSubmit = async (newItem) => { 
   const timeStr = newItem.created_at || ''
   const newId = Number(timeStr.replace(/\D/g, '')) || Date.now()
   const payload = { ...newItem, id: newId }
   
-  // 乐观更新 UI
-  casesData.value.unshift(payload)
+  casesData.value.unshift(payload) // 乐观更新
   showCaseModal.value = false
 
   try {
-    await api.createCase(payload) // 直接调用 api 方法
+    await api.createCase(payload)
+    showToast('Case created successfully!') // 成功提示
   } catch (e) {
     console.error('保存失败', e)
-    alert('操作失败，请确认是否已登录。')
-    loadCases() // 失败时回滚数据
+    showToast('Failed to create case', 'error') // 失败提示
+    loadCases() // 回滚
   }
 }
 
-// [重构] 更新工单
+// [修改 4] 更新工单 + 提示
 const handleUpdateSubmit = async (updatedItem) => { 
   const index = casesData.value.findIndex(c => c.id === updatedItem.id)
   if (index !== -1) casesData.value[index] = updatedItem 
   
   try {
     await api.updateCase(updatedItem.id, updatedItem)
+    showToast('Case updated!')
   } catch (e) {
     console.error('更新失败', e)
+    showToast('Failed to update case', 'error')
     loadCases()
   }
 }
 
-// [重构] 删除工单
+// [修改 5] 删除工单 + 提示
 const handleDeleteCase = async (id) => { 
   casesData.value = casesData.value.filter(c => c.id !== id)
   showCaseModal.value = false 
   
   try {
     await api.deleteCase(id)
+    showToast('Case deleted')
   } catch (e) {
     console.error('删除失败', e)
+    showToast('Failed to delete case', 'error')
     loadCases()
   }
 }
 
-const handleAction = (action) => { if (action === 'switch-case') switchTab('cases') }
-
-const startX = ref(0)
-const onPointerDown = (e) => { startX.value = e.clientX }
-const onPointerUp = (e) => {
-  const diff = e.clientX - startX.value
-  if (diff < -80) switchTab('cases') 
-  if (diff > 80) switchTab('basics') 
-}
-
-onMounted(() => {
-  loadCases() 
-  nextTick(() => updateNavIndicator())
-  window.addEventListener('resize', updateNavIndicator)
-})
-onUnmounted(() => {
-  window.removeEventListener('resize', updateNavIndicator)
-})
+onMounted(() => { loadCases(); nextTick(() => updateNavIndicator()); window.addEventListener('resize', updateNavIndicator) })
+onUnmounted(() => { window.removeEventListener('resize', updateNavIndicator) })
 </script>
 
 <template>
   <div class="ambient-light"></div>
   <div class="ambient-light-2"></div>
+
+  <Toast />
 
   <AuthOverlay :class="{ hidden: !showOverlay }" @unlock="handleUnlock" />
   
@@ -222,16 +172,17 @@ onUnmounted(() => {
   >+</div>
 
   <CaseModal 
-  :visible="showCaseModal"
-  :mode="modalMode"
-  :caseData="currentCase"
-  :allCases="casesData"  :isAdmin="authMode === 'admin'"
-  :originRect="caseModalOriginRect"
-  @close="showCaseModal = false"
-  @submit="handleCreateSubmit"
-  @update="handleUpdateSubmit"
-  @delete="handleDeleteCase"
-/>
+    :visible="showCaseModal"
+    :mode="modalMode"
+    :caseData="currentCase"
+    :allCases="casesData" 
+    :isAdmin="authMode === 'admin'"
+    :originRect="caseModalOriginRect"
+    @close="showCaseModal = false"
+    @submit="handleCreateSubmit"
+    @update="handleUpdateSubmit"
+    @delete="handleDeleteCase"
+  />
 
   <KnowledgeCard 
     :visible="showKnowledge"
@@ -245,6 +196,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 保持原有 style 即可，Toast 样式在 Toast.vue 中 */
 .page-mask { width: 100vw; height: 100vh; overflow: hidden; position: relative; z-index: 10; }
 .page-track { display: flex; width: 200vw; height: 100%; transition: transform 0.6s cubic-bezier(0.32, 0.725, 0, 1); }
 .page-section { width: 100vw; height: 100%; flex-shrink: 0; display: flex; justify-content: center; align-items: center; padding-top: 80px; padding-bottom: 90px; }
@@ -265,7 +217,6 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .section-container { width: 100%; padding: 0 10px; }
   .fab-add { right: 20px; bottom: 100px; width: 50px; height: 50px; }
-  /* 导航栏层级提升，确保手机端点击灵敏 */
   .bottom-nav { z-index: 1000; }
 }
 </style>

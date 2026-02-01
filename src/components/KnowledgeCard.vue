@@ -1,18 +1,11 @@
 <script setup>
 import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue'
-import api from '../services/api' // [新增] 引入 API 模块
+import api from '../services/api'
+import { showToast } from '../utils/toast' // [新增]
 
-const props = defineProps({
-  visible: Boolean,
-  data: Object, 
-  allItems: { type: Array, default: () => [] },
-  isAdmin: Boolean,
-  originRect: Object
-})
-
+// ... (Props, Emits, 状态定义... 保持不变) ...
+const props = defineProps({ visible: Boolean, data: Object, allItems: { type: Array, default: () => [] }, isAdmin: Boolean, originRect: Object })
 const emit = defineEmits(['close', 'switch'])
-
-// --- 状态管理 ---
 const notesCache = ref({}) 
 const isAdding = ref(false)
 const newContent = ref('')
@@ -23,183 +16,81 @@ const searchQuery = ref('')
 const isSearching = ref(false)
 const highlightedNoteId = ref(null)
 const savedSearchTerm = ref('')
-
 const startX = ref(0)
 const startY = ref(0)
 const isDragging = ref(false)
 const ignoreClick = ref(false)
-
 const cardWidth = ref(900)
 const cardGap = ref(40)
 const isAnimating = ref(false)
 const contentOpacity = ref(1)
 
-// --- 计算属性 ---
-const currentIndex = computed(() => {
-  if (!props.allItems || !props.data) return 0
-  return props.allItems.findIndex(item => item.title === props.data.title)
-})
-
-const totalNotesCount = computed(() => {
-  let count = 0
-  for (const key in notesCache.value) {
-    if (notesCache.value[key]) {
-      count += notesCache.value[key].length
-    }
-  }
-  return count
-})
-
-const trackStyle = computed(() => {
-  const offset = `calc(50vw - ${cardWidth.value / 2}px - ${currentIndex.value * (cardWidth.value + cardGap.value)}px)`
-  return { transform: `translateX(${offset})` }
-})
-
-const filteredResults = computed(() => {
-  if (!searchQuery.value.trim()) return []
-  const query = searchQuery.value.toLowerCase()
-  const results = []
-  for (const [title, notes] of Object.entries(notesCache.value)) {
-    notes.forEach(note => {
-      if (note.content.toLowerCase().includes(query)) {
-        const item = props.allItems.find(i => i.title === title)
-        if (item) results.push({ id: note.id, title, content: note.content, item })
-      }
-    })
-  }
-  return results
-})
-
-const handleCardClick = (item) => {
-  if (ignoreClick.value || item.title === props.data?.title) return
-  emit('switch', item)
-}
-
-// --- FLIP 动画 ---
-const performEnterAnimation = async () => {
-  if (!props.originRect) return
-  isAnimating.value = true
-  contentOpacity.value = 0
-  await nextTick()
-  const activeCard = document.querySelector('.card-wrapper.active .knowledge-card')
-  if (!activeCard) return
-  const targetRect = activeCard.getBoundingClientRect()
-  const scaleX = props.originRect.width / targetRect.width
-  const scaleY = props.originRect.height / targetRect.height
-  const translateX = props.originRect.left - targetRect.left + (props.originRect.width - targetRect.width) / 2
-  const translateY = props.originRect.top - targetRect.top + (props.originRect.height - targetRect.height) / 2
-  const wrapper = activeCard.parentElement
-  wrapper.style.transition = 'none'
-  wrapper.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`
-  activeCard.style.borderRadius = `${24 / Math.min(scaleX, scaleY)}px`
-  wrapper.offsetHeight 
-  requestAnimationFrame(() => {
-    wrapper.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'
-    wrapper.style.transform = ''
-    activeCard.style.transition = 'border-radius 0.5s'
-    activeCard.style.borderRadius = '24px'
-    setTimeout(() => { isAnimating.value = false; contentOpacity.value = 1 }, 400)
-  })
-}
-
-// --- [重构] 数据加载 ---
-const loadAllNotes = async () => {
-  try {
-    const allNotes = await api.getNotes()
-    
-    // 将扁平数组按 category (title) 分组
-    const newCache = {}
-    props.allItems.forEach(item => { newCache[item.title] = [] }) // 初始化
-    
-    allNotes.forEach(note => {
-      if (newCache[note.category]) {
-        newCache[note.category].push(note)
-      }
-    })
-    notesCache.value = newCache
-  } catch (e) {
-    console.error('加载笔记失败', e)
-  }
-}
-
+// ... (Computed, FLIP Animation, updateLayout... 保持不变) ...
+const currentIndex = computed(() => { if (!props.allItems || !props.data) return 0; return props.allItems.findIndex(item => item.title === props.data.title) })
+const totalNotesCount = computed(() => { let count = 0; for (const key in notesCache.value) { if (notesCache.value[key]) count += notesCache.value[key].length } return count })
+const trackStyle = computed(() => { const offset = `calc(50vw - ${cardWidth.value / 2}px - ${currentIndex.value * (cardWidth.value + cardGap.value)}px)`; return { transform: `translateX(${offset})` } })
+const filteredResults = computed(() => { if (!searchQuery.value.trim()) return []; const query = searchQuery.value.toLowerCase(); const results = []; for (const [title, notes] of Object.entries(notesCache.value)) { notes.forEach(note => { if (note.content.toLowerCase().includes(query)) { const item = props.allItems.find(i => i.title === title); if (item) results.push({ id: note.id, title, content: note.content, item }) } }) } return results })
+const handleCardClick = (item) => { if (ignoreClick.value || item.title === props.data?.title) return; emit('switch', item) }
+const performEnterAnimation = async () => { if (!props.originRect) return; isAnimating.value = true; contentOpacity.value = 0; await nextTick(); const activeCard = document.querySelector('.card-wrapper.active .knowledge-card'); if (!activeCard) return; const targetRect = activeCard.getBoundingClientRect(); const scaleX = props.originRect.width / targetRect.width; const scaleY = props.originRect.height / targetRect.height; const translateX = props.originRect.left - targetRect.left + (props.originRect.width - targetRect.width) / 2; const translateY = props.originRect.top - targetRect.top + (props.originRect.height - targetRect.height) / 2; const wrapper = activeCard.parentElement; wrapper.style.transition = 'none'; wrapper.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`; activeCard.style.borderRadius = `${24 / Math.min(scaleX, scaleY)}px`; wrapper.offsetHeight; requestAnimationFrame(() => { wrapper.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'; wrapper.style.transform = ''; activeCard.style.transition = 'border-radius 0.5s'; activeCard.style.borderRadius = '24px'; setTimeout(() => { isAnimating.value = false; contentOpacity.value = 1 }, 400) }) }
+const loadAllNotes = async () => { try { const res = await fetch('/api/notes'); if (res.ok) { const allNotes = await res.json(); const newCache = {}; props.allItems.forEach(item => { newCache[item.title] = [] }); allNotes.forEach(note => { if (newCache[note.category]) newCache[note.category].push(note) }); notesCache.value = newCache } } catch (e) { console.error('Load Error', e) } }
 const getCurrentNotes = (title) => notesCache.value[title] || []
 const updateLayout = () => { const w = window.innerWidth; if (w < 768) { cardWidth.value = w * 0.92; cardGap.value = 16 } else { cardWidth.value = 900; cardGap.value = 40 } }
 onMounted(() => { updateLayout(); window.addEventListener('resize', updateLayout) })
 onUnmounted(() => { window.removeEventListener('resize', updateLayout) })
-
-watch(() => props.visible, (val) => {
-  if (val) {
-    isAdding.value = false; newContent.value = ''; editingNoteId.value = null; isModifyMode.value = false; searchQuery.value = ''; isSearching.value = false; highlightedNoteId.value = null;
-    savedSearchTerm.value = '' 
-    loadAllNotes(); // 打开时加载数据
-    updateLayout(); performEnterAnimation()
-  } else { contentOpacity.value = 1 }
-})
-
-// 高亮渲染函数
-const renderContent = (content) => {
-  if (!content) return ''
-  if (!savedSearchTerm.value.trim()) return content
-  const reg = new RegExp(`(${savedSearchTerm.value})`, 'gi')
-  return content.replace(reg, '<span class="highlight-text">$1</span>')
-}
-
-// --- [重构] CRUD 操作 ---
+watch(() => props.visible, (val) => { if (val) { isAdding.value = false; newContent.value = ''; editingNoteId.value = null; isModifyMode.value = false; searchQuery.value = ''; isSearching.value = false; highlightedNoteId.value = null; savedSearchTerm.value = ''; loadAllNotes(); updateLayout(); performEnterAnimation() } else { contentOpacity.value = 1 } })
+const renderContent = (content) => { if (!content) return ''; if (!savedSearchTerm.value.trim()) return content; const reg = new RegExp(`(${savedSearchTerm.value})`, 'gi'); return content.replace(reg, '<span class="highlight-text">$1</span>') }
 const activeTitle = computed(() => props.data?.title)
 const startAdd = () => { if (!activeTitle.value) return; cancelEdit(); isAdding.value = true; nextTick(() => { scrollToBottom(); const t = document.querySelector('#new-note-textarea'); if(t) t.focus(); }) }
 
+// [修改 1] 添加笔记
 const confirmInput = async () => { 
   if (!newContent.value.trim() || !activeTitle.value) return
-  
   const payload = { category: activeTitle.value, content: newContent.value }
   
   try {
-    const savedNote = await api.createNote(payload) // 使用 api 模块
-
-    // UI 更新
+    const savedNote = await api.createNote(payload)
     if (!notesCache.value[activeTitle.value]) notesCache.value[activeTitle.value] = []
     notesCache.value[activeTitle.value].push(savedNote)
-    
     newContent.value = ''
     isAdding.value = false
     nextTick(scrollToBottom)
+    showToast('Note added!') // [新增提示]
   } catch (e) {
     console.error('添加笔记失败', e)
+    showToast('Failed to add note', 'error')
   }
 }
 
-const startEdit = (note) => { 
-  if (!props.isAdmin) return; // 权限校验
-  if (props.data.title !== activeTitle.value) return; 
-  if (isAdding.value) isAdding.value = false; 
-  editingNoteId.value = note.id; 
-  editingContent.value = note.content; 
-  nextTick(() => { const t = document.querySelector(`#edit-textarea-${note.id}`); if(t){ autoResize({target:t}); t.focus(); } }) 
-}
+const startEdit = (note) => { if (!props.isAdmin) return; if (props.data.title !== activeTitle.value) return; if (isAdding.value) isAdding.value = false; editingNoteId.value = note.id; editingContent.value = note.content; nextTick(() => { const t = document.querySelector(`#edit-textarea-${note.id}`); if(t){ autoResize({target:t}); t.focus(); } }) }
 
+// [修改 2] 更新笔记
 const updateNote = async () => { 
   if (!editingContent.value.trim() || !activeTitle.value) return
-  
   const list = notesCache.value[activeTitle.value]
   const index = list.findIndex(n => n.id === editingNoteId.value)
   if (index !== -1) list[index].content = editingContent.value
   
   try {
-    await api.updateNote(editingNoteId.value, { content: editingContent.value }) // 使用 api 模块
-  } catch (e) {
-    console.error('更新笔记失败', e)
+    await api.updateNote(editingNoteId.value, { content: editingContent.value })
+    showToast('Note updated') // [新增提示]
+  } catch(e) { 
+    console.error(e) 
+    showToast('Failed to update', 'error')
   }
   cancelEdit() 
 }
 
+// [修改 3] 删除笔记
 const deleteNote = async (id) => { 
   if (!activeTitle.value) return
   notesCache.value[activeTitle.value] = notesCache.value[activeTitle.value].filter(n => n.id !== id)
   
   try {
-    await api.deleteNote(id) // 使用 api 模块
-  } catch (e) {
-    console.error('删除笔记失败', e)
+    await api.deleteNote(id)
+    showToast('Note deleted') // [新增提示]
+  } catch(e) { 
+    console.error(e)
+    showToast('Failed to delete', 'error')
   }
 }
 
@@ -207,58 +98,17 @@ const cancelEdit = () => { editingNoteId.value = null; editingContent.value = ''
 const toggleModify = () => { isModifyMode.value = !isModifyMode.value; cancelEdit(); isAdding.value = false }
 const handleDownload = () => { if (!activeTitle.value) return; let text = `# ${activeTitle.value}\n\n`; const list = notesCache.value[activeTitle.value] || []; list.forEach((note, i) => { text += `### Note ${i+1}\n${note.content}\n\n` }); const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${activeTitle.value}_Notes.md`; link.click(); }
 const enterSearchMode = () => { isSearching.value = true }; const exitSearchMode = () => { isSearching.value = false; searchQuery.value = '' }
-const handleSearchResultClick = (result) => { 
-  savedSearchTerm.value = searchQuery.value 
-  emit('switch', result.item); exitSearchMode(); highlightedNoteId.value = result.id; nextTick(() => { setTimeout(() => { const noteElement = document.getElementById(`note-${result.id}`); if (noteElement) noteElement.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, 300); setTimeout(() => { highlightedNoteId.value = null }, 2000) }) 
-}
+const handleSearchResultClick = (result) => { savedSearchTerm.value = searchQuery.value; emit('switch', result.item); exitSearchMode(); highlightedNoteId.value = result.id; nextTick(() => { setTimeout(() => { const noteElement = document.getElementById(`note-${result.id}`); if (noteElement) noteElement.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, 300); setTimeout(() => { highlightedNoteId.value = null }, 2000) }) }
 const scrollToBottom = () => { const ac = document.querySelector('.card-wrapper.active .notes-scroll-area'); if(ac) ac.scrollTop = ac.scrollHeight; }
 const autoResize = (e) => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }
 const formatIndex = (i) => (i + 1).toString().padStart(2, '0')
-
-// --- 手势与点击处理 (保持不变) ---
-const onTouchStart = (e) => {
-  if (e.target.tagName.toLowerCase() === 'textarea' || e.target.closest('button') || e.target.closest('.global-search-container')) return
-  if (e.changedTouches) { startX.value = e.changedTouches[0].clientX; startY.value = e.changedTouches[0].clientY } else { startX.value = e.clientX; startY.value = e.clientY }
-  isDragging.value = true
-}
-const onTouchEnd = (e) => {
-  if (!isDragging.value) return; isDragging.value = false
-  const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX
-  const endY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY
-  const diffX = endX - startX.value
-  const diffY = endY - startY.value
-  
-  if (!isSearching.value) {
-    if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) { 
-      if (diffX < 0) switchItem('next'); else switchItem('prev'); 
-      ignoreClick.value = true; 
-      setTimeout(() => { ignoreClick.value = false }, 100); 
-      return 
-    }
-    if (diffY > 100 && Math.abs(diffY) > Math.abs(diffX)) { 
-      if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close'); return } 
-    }
-  }
-  if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) {
-    const isClickOnCard = e.target.closest('.knowledge-card')
-    const isClickOnSearch = e.target.closest('.global-search-container')
-    const isClickOnResults = e.target.closest('.search-results-list')
-    if (!isClickOnCard && !isClickOnSearch && !isClickOnResults) { 
-      if (isSearching.value) { exitSearchMode() } 
-      else { if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close') } } 
-    }
-  }
-}
+const onTouchStart = (e) => { if (e.target.tagName.toLowerCase() === 'textarea' || e.target.closest('button') || e.target.closest('.global-search-container')) return; if (e.changedTouches) { startX.value = e.changedTouches[0].clientX; startY.value = e.changedTouches[0].clientY } else { startX.value = e.clientX; startY.value = e.clientY } isDragging.value = true }
+const onTouchEnd = (e) => { if (!isDragging.value) return; isDragging.value = false; const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX; const endY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY; const diffX = endX - startX.value; const diffY = endY - startY.value; if (!isSearching.value) { if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) { if (diffX < 0) switchItem('next'); else switchItem('prev'); ignoreClick.value = true; setTimeout(() => { ignoreClick.value = false }, 100); return } if (diffY > 100 && Math.abs(diffY) > Math.abs(diffX)) { if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close'); return } } } if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) { const isClickOnCard = e.target.closest('.knowledge-card'); const isClickOnSearch = e.target.closest('.global-search-container'); const isClickOnResults = e.target.closest('.search-results-list'); if (!isClickOnCard && !isClickOnSearch && !isClickOnResults) { if (isSearching.value) { exitSearchMode() } else { if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close') } } } } }
 const switchItem = (direction) => { if (!props.allItems.length) return; let nextIdx; if (direction === 'next') nextIdx = (currentIndex.value + 1) % props.allItems.length; else nextIdx = (currentIndex.value - 1 + props.allItems.length) % props.allItems.length; emit('switch', props.allItems[nextIdx]) }
 </script>
 
 <template>
-  <div 
-    class="knowledge-overlay" 
-    :class="{ visible: visible }"
-    @mousedown="onTouchStart" @mouseup="onTouchEnd"
-    @touchstart="onTouchStart" @touchend="onTouchEnd"
-  >
+  <div class="knowledge-overlay" :class="{ visible: visible }" @mousedown="onTouchStart" @mouseup="onTouchEnd" @touchstart="onTouchStart" @touchend="onTouchEnd">
     <div class="global-search-container" :class="{ 'search-active': isSearching }" :style="{ opacity: contentOpacity, transition: 'opacity 0.3s' }" @mousedown.stop @touchstart.stop>
       <div class="search-input-wrapper">
         <span class="search-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
@@ -266,7 +116,6 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
         <button v-if="isSearching" class="close-search-btn" @click="exitSearchMode">{{ searchQuery ? 'Clear' : 'Cancel' }}</button>
       </div>
     </div>
-    
     <transition name="fade-up">
       <div class="search-results-layer" v-if="isSearching" @mousedown.stop @touchstart.stop>
         <div class="search-results-list" v-if="searchQuery">
@@ -281,15 +130,8 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
         <div v-else class="search-placeholder"><p>Type to search across all your notes</p></div>
       </div>
     </transition>
-
     <div class="carousel-track" :style="[trackStyle, { gap: cardGap + 'px' }]" :class="{ 'track-hidden': isSearching }">
-      <div 
-        v-for="(item, index) in allItems" 
-        :key="item.title"
-        class="card-wrapper"
-        :style="{ width: cardWidth + 'px' }" 
-        :class="{ active: index === currentIndex }"
-      >
+      <div v-for="(item, index) in allItems" :key="item.title" class="card-wrapper" :style="{ width: cardWidth + 'px' }" :class="{ active: index === currentIndex }">
         <div class="glass-card knowledge-card" @click.stop="handleCardClick(item)">
           <div class="card-content-wrapper" :style="{ opacity: contentOpacity, transition: 'opacity 0.4s' }">
             <div class="card-header">
@@ -346,7 +188,7 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
 </template>
 
 <style scoped>
-/* 保持原有所有样式，无需修改 */
+/* 保持原有 style 即可 */
 .card-content-wrapper { display: flex; flex-direction: column; height: 100%; width: 100%; }
 .knowledge-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: var(--modal-overlay); backdrop-filter: blur(20px); z-index: 2000; opacity: 0; pointer-events: none; transition: opacity 0.4s ease; overflow: hidden; }
 .knowledge-overlay.visible { opacity: 1; pointer-events: auto; }
@@ -425,8 +267,6 @@ button { border: none; transition: all 0.2s; }
 @keyframes popIn { from { opacity: 0; transform: scale(0.9) translateY(10px); } to { opacity: 1; transform: scale(1); } }
 @keyframes jelly { 0%, 100% { transform: scale(1, 1); } 30% { transform: scale(1.25, 0.75); } 40% { transform: scale(0.75, 1.25); } 50% { transform: scale(1.15, 0.85); } 65% { transform: scale(0.95, 1.05); } 75% { transform: scale(1.05, 0.95); } }
 @keyframes shake { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(0.5deg); } 75% { transform: rotate(-0.5deg); } }
-
-/* === [核心优化] 手机端适配 === */
 @media (max-width: 768px) {
   .knowledge-card { padding: 24px 20px !important; }
   .global-search-container { width: 90vw !important; top: 50px; }
