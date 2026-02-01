@@ -1,41 +1,33 @@
 <script setup>
 import { ref } from 'vue'
+import api from '../services/api' // [新增]
 
 const emit = defineEmits(['unlock'])
 
 const password = ref('')
 const isShaking = ref(false)
-const isLoading = ref(false) // 新增加载状态
+const isLoading = ref(false)
 
 const handleConfirm = async () => {
   if (!password.value) return triggerShake()
   
   isLoading.value = true
   try {
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: password.value })
-    })
-
-    if (res.ok) {
-      const data = await res.json()
-      // 登录成功，把令牌存进浏览器
-      localStorage.setItem('authToken', data.token)
-      emit('unlock', 'admin')
-    } else {
-      triggerShake()
-    }
+    const data = await api.login(password.value) // [重构] 使用 api 模块
+    
+    // 登录成功，Token 已经在 login 接口响应中拿到
+    localStorage.setItem('authToken', data.token)
+    emit('unlock', 'admin')
   } catch (e) {
-    console.error(e)
+    console.error('登录失败', e)
     triggerShake()
   } finally {
     isLoading.value = false
   }
 }
 
+// ... (其他部分保持不变)
 const handleGuest = () => {
-  // Guest 不需要令牌，或者清除旧令牌
   localStorage.removeItem('authToken')
   emit('unlock', 'guest')
 }

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue'
+import api from '../services/api' // [新增] 引入 API 模块
 
 const props = defineProps({
   visible: Boolean,
@@ -21,8 +22,6 @@ const isModifyMode = ref(false)
 const searchQuery = ref('')
 const isSearching = ref(false)
 const highlightedNoteId = ref(null)
-
-// [新增] 用于存储点击搜索结果时的关键词，用于正文高亮
 const savedSearchTerm = ref('')
 
 const startX = ref(0)
@@ -76,7 +75,7 @@ const handleCardClick = (item) => {
   emit('switch', item)
 }
 
-// --- 动画逻辑 ---
+// --- FLIP 动画 ---
 const performEnterAnimation = async () => {
   if (!props.originRect) return
   isAnimating.value = true
@@ -103,23 +102,23 @@ const performEnterAnimation = async () => {
   })
 }
 
-// --- 数据加载 ---
+// --- [重构] 数据加载 ---
 const loadAllNotes = async () => {
   try {
-    const res = await fetch('/api/notes') // GET 请求通常公开，如果后端也加了锁，这里也要加 Header
-    if (res.ok) {
-      const allNotes = await res.json()
-      const newCache = {}
-      props.allItems.forEach(item => { newCache[item.title] = [] })
-      allNotes.forEach(note => {
-        if (newCache[note.category]) {
-          newCache[note.category].push(note)
-        }
-      })
-      notesCache.value = newCache
-    }
+    const allNotes = await api.getNotes()
+    
+    // 将扁平数组按 category (title) 分组
+    const newCache = {}
+    props.allItems.forEach(item => { newCache[item.title] = [] }) // 初始化
+    
+    allNotes.forEach(note => {
+      if (newCache[note.category]) {
+        newCache[note.category].push(note)
+      }
+    })
+    notesCache.value = newCache
   } catch (e) {
-    console.error('Load Error', e)
+    console.error('加载笔记失败', e)
   }
 }
 
@@ -130,56 +129,47 @@ onUnmounted(() => { window.removeEventListener('resize', updateLayout) })
 
 watch(() => props.visible, (val) => {
   if (val) {
-    isAdding.value = false; newContent.value = ''; editingNoteId.value = null; isModifyMode.value = false; 
-    searchQuery.value = ''; isSearching.value = false; highlightedNoteId.value = null;
-    savedSearchTerm.value = '' // 重置高亮
-    loadAllNotes(); updateLayout(); performEnterAnimation()
+    isAdding.value = false; newContent.value = ''; editingNoteId.value = null; isModifyMode.value = false; searchQuery.value = ''; isSearching.value = false; highlightedNoteId.value = null;
+    savedSearchTerm.value = '' 
+    loadAllNotes(); // 打开时加载数据
+    updateLayout(); performEnterAnimation()
   } else { contentOpacity.value = 1 }
 })
 
-// [新增] 高亮渲染函数：用于 v-html
+// 高亮渲染函数
 const renderContent = (content) => {
   if (!content) return ''
   if (!savedSearchTerm.value.trim()) return content
-  // 使用正则替换，包裹 .highlight-text (样式在 style.css 中)
   const reg = new RegExp(`(${savedSearchTerm.value})`, 'gi')
   return content.replace(reg, '<span class="highlight-text">$1</span>')
 }
 
-// --- CRUD 操作 (含安全加固) ---
+// --- [重构] CRUD 操作 ---
 const activeTitle = computed(() => props.data?.title)
-
 const startAdd = () => { if (!activeTitle.value) return; cancelEdit(); isAdding.value = true; nextTick(() => { scrollToBottom(); const t = document.querySelector('#new-note-textarea'); if(t) t.focus(); }) }
 
 const confirmInput = async () => { 
   if (!newContent.value.trim() || !activeTitle.value) return
+  
   const payload = { category: activeTitle.value, content: newContent.value }
   
-  // [安全] 获取 Token
-  const token = localStorage.getItem('authToken')
-
   try {
-    const res = await fetch('/api/notes', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` // [安全] 添加 Header
-      },
-      body: JSON.stringify(payload)
-    })
+    const savedNote = await api.createNote(payload) // 使用 api 模块
+
+    // UI 更新
+    if (!notesCache.value[activeTitle.value]) notesCache.value[activeTitle.value] = []
+    notesCache.value[activeTitle.value].push(savedNote)
     
-    if (res.ok) {
-      const savedNote = await res.json()
-      if (!notesCache.value[activeTitle.value]) notesCache.value[activeTitle.value] = []
-      notesCache.value[activeTitle.value].push(savedNote)
-      newContent.value = ''; isAdding.value = false; nextTick(scrollToBottom)
-    }
-  } catch (e) { console.error(e) }
+    newContent.value = ''
+    isAdding.value = false
+    nextTick(scrollToBottom)
+  } catch (e) {
+    console.error('添加笔记失败', e)
+  }
 }
 
 const startEdit = (note) => { 
-  if (!props.isAdmin) return; // [安全] Guest 无法双击编辑
-  
+  if (!props.isAdmin) return; // 权限校验
   if (props.data.title !== activeTitle.value) return; 
   if (isAdding.value) isAdding.value = false; 
   editingNoteId.value = note.id; 
@@ -194,20 +184,11 @@ const updateNote = async () => {
   const index = list.findIndex(n => n.id === editingNoteId.value)
   if (index !== -1) list[index].content = editingContent.value
   
-  // [安全] 获取 Token
-  const token = localStorage.getItem('authToken')
-
   try {
-    await fetch(`/api/notes/${editingNoteId.value}`, {
-      method: 'PUT',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` // [安全] 添加 Header
-      },
-      body: JSON.stringify({ content: editingContent.value })
-    })
-  } catch(e) { console.error(e) }
-  
+    await api.updateNote(editingNoteId.value, { content: editingContent.value }) // 使用 api 模块
+  } catch (e) {
+    console.error('更新笔记失败', e)
+  }
   cancelEdit() 
 }
 
@@ -215,47 +196,26 @@ const deleteNote = async (id) => {
   if (!activeTitle.value) return
   notesCache.value[activeTitle.value] = notesCache.value[activeTitle.value].filter(n => n.id !== id)
   
-  // [安全] 获取 Token
-  const token = localStorage.getItem('authToken')
-
   try {
-    await fetch(`/api/notes/${id}`, { 
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` } // [安全] 添加 Header
-    })
-  } catch(e) { console.error(e) }
+    await api.deleteNote(id) // 使用 api 模块
+  } catch (e) {
+    console.error('删除笔记失败', e)
+  }
 }
 
 const cancelEdit = () => { editingNoteId.value = null; editingContent.value = '' }
 const toggleModify = () => { isModifyMode.value = !isModifyMode.value; cancelEdit(); isAdding.value = false }
 const handleDownload = () => { if (!activeTitle.value) return; let text = `# ${activeTitle.value}\n\n`; const list = notesCache.value[activeTitle.value] || []; list.forEach((note, i) => { text += `### Note ${i+1}\n${note.content}\n\n` }); const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${activeTitle.value}_Notes.md`; link.click(); }
-
-// --- 搜索交互 ---
-const enterSearchMode = () => { isSearching.value = true }
-const exitSearchMode = () => { isSearching.value = false; searchQuery.value = '' }
-
+const enterSearchMode = () => { isSearching.value = true }; const exitSearchMode = () => { isSearching.value = false; searchQuery.value = '' }
 const handleSearchResultClick = (result) => { 
-  // [体验] 记录搜索词用于高亮
   savedSearchTerm.value = searchQuery.value 
-  
-  emit('switch', result.item) 
-  exitSearchMode() 
-  highlightedNoteId.value = result.id 
-  nextTick(() => { 
-    setTimeout(() => { 
-      const noteElement = document.getElementById(`note-${result.id}`)
-      if (noteElement) noteElement.scrollIntoView({ behavior: 'smooth', block: 'center' }) 
-    }, 300)
-    setTimeout(() => { highlightedNoteId.value = null }, 2000) 
-  }) 
+  emit('switch', result.item); exitSearchMode(); highlightedNoteId.value = result.id; nextTick(() => { setTimeout(() => { const noteElement = document.getElementById(`note-${result.id}`); if (noteElement) noteElement.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, 300); setTimeout(() => { highlightedNoteId.value = null }, 2000) }) 
 }
-
-// --- 辅助工具 ---
 const scrollToBottom = () => { const ac = document.querySelector('.card-wrapper.active .notes-scroll-area'); if(ac) ac.scrollTop = ac.scrollHeight; }
 const autoResize = (e) => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }
 const formatIndex = (i) => (i + 1).toString().padStart(2, '0')
 
-// --- 手势与点击处理 ---
+// --- 手势与点击处理 (保持不变) ---
 const onTouchStart = (e) => {
   if (e.target.tagName.toLowerCase() === 'textarea' || e.target.closest('button') || e.target.closest('.global-search-container')) return
   if (e.changedTouches) { startX.value = e.changedTouches[0].clientX; startY.value = e.changedTouches[0].clientY } else { startX.value = e.clientX; startY.value = e.clientY }
@@ -269,19 +229,16 @@ const onTouchEnd = (e) => {
   const diffY = endY - startY.value
   
   if (!isSearching.value) {
-    // 左右滑动切换卡片
     if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) { 
       if (diffX < 0) switchItem('next'); else switchItem('prev'); 
       ignoreClick.value = true; 
       setTimeout(() => { ignoreClick.value = false }, 100); 
       return 
     }
-    // 下滑关闭
     if (diffY > 100 && Math.abs(diffY) > Math.abs(diffX)) { 
       if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close'); return } 
     }
   }
-  // 点击背景关闭
   if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) {
     const isClickOnCard = e.target.closest('.knowledge-card')
     const isClickOnSearch = e.target.closest('.global-search-container')

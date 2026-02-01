@@ -7,6 +7,7 @@ import CasesCard from './components/CasesCard.vue'
 import CaseModal from './components/CaseModal.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import KnowledgeCard from './components/KnowledgeCard.vue' 
+import api from './services/api' // [新增] 引入 API 模块
 
 const authMode = ref('locked')
 const showOverlay = ref(true)
@@ -32,17 +33,13 @@ const knowledgeItems = ref([
 // 数据源
 const casesData = ref([])
 
-// 加载 Cases 数据 (公开接口，无需 Token)
+// [重构] 加载 Cases 数据
 const loadCases = async () => {
   try {
-    const res = await fetch('/api/cases')
-    if (res.ok) {
-      casesData.value = await res.json()
-    } else {
-      console.error('加载工单失败:', res.status)
-    }
+    const data = await api.getCases()
+    casesData.value = data
   } catch (e) {
-    console.error('无法连接到服务器:', e)
+    console.error('加载工单失败:', e)
   }
 }
 
@@ -109,28 +106,18 @@ const openViewModal = ({ item, rect }) => {
   showCaseModal.value = true
 }
 
-// 新增工单：增加 Authorization Token 校验
+// [重构] 新增工单
 const handleCreateSubmit = async (newItem) => { 
   const timeStr = newItem.created_at || ''
   const newId = Number(timeStr.replace(/\D/g, '')) || Date.now()
   const payload = { ...newItem, id: newId }
   
-  const token = localStorage.getItem('authToken') // 获取安全令牌
-
   // 乐观更新 UI
   casesData.value.unshift(payload)
   showCaseModal.value = false
 
   try {
-    const res = await fetch('/api/cases', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` // 发送令牌进行安保验证
-      },
-      body: JSON.stringify(payload)
-    })
-    if (!res.ok) throw new Error('Unauthorized or Server Error')
+    await api.createCase(payload) // 直接调用 api 方法
   } catch (e) {
     console.error('保存失败', e)
     alert('操作失败，请确认是否已登录。')
@@ -138,42 +125,26 @@ const handleCreateSubmit = async (newItem) => {
   }
 }
 
-// 更新工单：增加 Authorization Token 校验
+// [重构] 更新工单
 const handleUpdateSubmit = async (updatedItem) => { 
   const index = casesData.value.findIndex(c => c.id === updatedItem.id)
   if (index !== -1) casesData.value[index] = updatedItem 
   
-  const token = localStorage.getItem('authToken')
-
   try {
-    const res = await fetch(`/api/cases/${updatedItem.id}`, {
-      method: 'PUT',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(updatedItem)
-    })
-    if (!res.ok) throw new Error('Unauthorized')
+    await api.updateCase(updatedItem.id, updatedItem)
   } catch (e) {
     console.error('更新失败', e)
     loadCases()
   }
 }
 
-// 删除工单：增加 Authorization Token 校验
+// [重构] 删除工单
 const handleDeleteCase = async (id) => { 
   casesData.value = casesData.value.filter(c => c.id !== id)
   showCaseModal.value = false 
   
-  const token = localStorage.getItem('authToken')
-
   try {
-    const res = await fetch(`/api/cases/${id}`, { 
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` }
-    })
-    if (!res.ok) throw new Error('Unauthorized')
+    await api.deleteCase(id)
   } catch (e) {
     console.error('删除失败', e)
     loadCases()
