@@ -1,42 +1,76 @@
 <script setup>
 import { ref, watch, nextTick } from 'vue'
+import { renderMarkdown } from '../utils/markdown' // [新增] 引入 Markdown 工具
 
 const props = defineProps({
-  visible: Boolean, mode: String, caseData: Object, 
-  allCases: { type: Array, default: () => [] }, // 确保父组件传了这个值
-  isAdmin: Boolean, originRect: Object
+  visible: Boolean,
+  mode: String,
+  caseData: Object,
+  allCases: { type: Array, default: () => [] }, // 确保接收父组件传来的列表
+  isAdmin: Boolean,
+  originRect: Object
 })
+
 const emit = defineEmits(['close', 'submit', 'update', 'delete'])
 
-const form = ref({ id: null, title: '', category: 'Linux', priority: 'Medium', description: '', resolution: '', created_at: '', resolved_at: '' })
+const form = ref({
+  id: null, title: '', category: 'Linux', priority: 'Medium', 
+  description: '', resolution: '', created_at: '', resolved_at: ''
+})
+
 const isEditing = ref(false)
 const isShaking = ref(false)
 const titleWarning = ref(false)
 const showDeleteConfirm = ref(false)
+
+// 动画控制
 const showAnimation = ref(false)
 const isPreparing = ref(false)
 
 const resetForm = () => {
-  form.value = { id: null, title: '', category: 'Linux', priority: 'Medium', description: '', resolution: '', created_at: '', resolved_at: '' }
-  titleWarning.value = false; showDeleteConfirm.value = false; isShaking.value = false
+  form.value = { 
+    id: null, title: '', category: 'Linux', priority: 'Medium', 
+    description: '', resolution: '', created_at: '', resolved_at: ''
+  }
+  titleWarning.value = false
+  showDeleteConfirm.value = false
+  isShaking.value = false
 }
+
+// 统一时间格式化工具
 const formatTime = (date) => {
-  const y = date.getFullYear(); const m = date.getMonth() + 1; const d = date.getDate()
-  const h = date.getHours().toString().padStart(2, '0'); const min = date.getMinutes().toString().padStart(2, '0'); const s = date.getSeconds().toString().padStart(2, '0')
+  const y = date.getFullYear()
+  const m = date.getMonth() + 1
+  const d = date.getDate()
+  const h = date.getHours().toString().padStart(2, '0')
+  const min = date.getMinutes().toString().padStart(2, '0')
+  const s = date.getSeconds().toString().padStart(2, '0')
   return `${y}/${m}/${d} ${h}:${min}:${s}`
 }
+
+// 动画逻辑
 const triggerDropAnimation = () => {
   isPreparing.value = true; showAnimation.value = false
   setTimeout(() => { isPreparing.value = false; showAnimation.value = true }, 100)
 }
+
 watch(() => props.visible, (val) => {
   if (val) {
     triggerDropAnimation()
-    if (props.mode === 'create') { resetForm(); isEditing.value = true }
-    else if (props.caseData) { form.value = { ...props.caseData }; isEditing.value = false }
-  } else { showAnimation.value = false; isPreparing.value = false; titleWarning.value = false; isShaking.value = false; showDeleteConfirm.value = false }
+    if (props.mode === 'create') {
+      resetForm(); isEditing.value = true
+    } else if (props.caseData) {
+      form.value = { ...props.caseData }; isEditing.value = false
+    }
+  } else {
+    showAnimation.value = false; isPreparing.value = false
+    titleWarning.value = false; isShaking.value = false; showDeleteConfirm.value = false
+  }
 })
-watch(() => props.caseData, (newVal) => { if (props.visible && newVal) form.value = { ...newVal } }, { immediate: true })
+
+watch(() => props.caseData, (newVal) => {
+  if (props.visible && newVal) form.value = { ...newVal }
+}, { immediate: true })
 
 const switchCase = (direction) => {
   if (props.mode === 'create' || !props.allCases.length) return
@@ -52,14 +86,30 @@ const switchCase = (direction) => {
 }
 
 const triggerShake = () => { isShaking.value = true; setTimeout(() => { isShaking.value = false }, 500) }
+
 const handleSubmit = () => {
   if (!form.value.title || !form.value.title.trim()) { titleWarning.value = true; triggerShake(); return }
-  if (form.value.resolution && !form.value.resolved_at) { form.value.resolved_at = formatTime(new Date()) }
-  if (props.mode === 'create') { emit('submit', { ...form.value, created_at: formatTime(new Date()) }) }
-  else { emit('update', { ...form.value }); isEditing.value = false }
+  
+  if (form.value.resolution && !form.value.resolved_at) {
+    form.value.resolved_at = formatTime(new Date())
+  }
+
+  if (props.mode === 'create') {
+    emit('submit', { ...form.value, created_at: formatTime(new Date()) })
+  } else {
+    emit('update', { ...form.value })
+    isEditing.value = false
+  }
 }
+
 const toggleEdit = () => { isEditing.value = true }
-const cancelEdit = () => { isEditing.value = false; if (props.caseData) form.value = { ...props.caseData }; titleWarning.value = false }
+const cancelEdit = () => {
+  isEditing.value = false
+  const original = props.allCases.find(c => c.id === form.value.id)
+  if (original) form.value = { ...original }
+  else if (props.caseData) form.value = { ...props.caseData }
+  titleWarning.value = false
+}
 const handleDeleteClick = () => { triggerShake(); showDeleteConfirm.value = true }
 const confirmDelete = () => { emit('delete', form.value.id); showDeleteConfirm.value = false }
 const cancelDelete = () => { showDeleteConfirm.value = false }
@@ -106,14 +156,22 @@ const handleDownload = () => {
 
         <div class="form-group drop-item" style="--delay: 0.3s">
           <label>Description</label>
-          <textarea v-if="isEditing" class="modal-input textarea" v-model="form.description" placeholder="Describe the issue..."></textarea>
-          <div v-else class="modal-input read-only-content">{{ form.description || 'No description provided.' }}</div>
+          <textarea v-if="isEditing" class="modal-input textarea" v-model="form.description" placeholder="Markdown supported..."></textarea>
+          <div 
+            v-else 
+            class="modal-input read-only-content markdown-body" 
+            v-html="renderMarkdown(form.description)"
+          ></div>
         </div>
 
         <div class="form-group drop-item" style="--delay: 0.4s">
           <label>Resolution</label>
-          <textarea v-if="isEditing" class="modal-input textarea" v-model="form.resolution" placeholder="Document the solution..."></textarea>
-          <div v-else class="modal-input read-only-content">{{ form.resolution || 'No resolution yet.' }}</div>
+          <textarea v-if="isEditing" class="modal-input textarea" v-model="form.resolution" placeholder="Markdown supported..."></textarea>
+          <div 
+            v-else 
+            class="modal-input read-only-content markdown-body" 
+            v-html="renderMarkdown(form.resolution || 'No resolution yet.')"
+          ></div>
         </div>
         
         <div class="meta-info drop-item" style="--delay: 0.5s" v-if="mode === 'view'">
