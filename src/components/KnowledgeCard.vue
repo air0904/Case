@@ -1,8 +1,8 @@
 <script setup>
 import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue'
-import api from '../services/api' // [新增] 引入 API
-import { showToast } from '../utils/toast' // [新增] 引入 Toast
-import { renderMarkdown } from '../utils/markdown' // [新增] 引入 Markdown
+import api from '../services/api'
+import { showToast } from '../utils/toast'
+import { renderMarkdown } from '../utils/markdown'
 
 const props = defineProps({
   visible: Boolean,
@@ -20,7 +20,11 @@ const isAdding = ref(false)
 const newContent = ref('')
 const editingNoteId = ref(null)
 const editingContent = ref('')
+
+// 模式控制
 const isModifyMode = ref(false) 
+const isDeleteMode = ref(false) 
+
 const searchQuery = ref('')
 const isSearching = ref(false)
 const highlightedNoteId = ref(null)
@@ -37,15 +41,25 @@ const isAnimating = ref(false)
 const contentOpacity = ref(1)
 
 // --- 计算属性 ---
-const currentIndex = computed(() => {
-  if (!props.allItems || !props.data) return 0
-  return props.allItems.findIndex(item => item.title === props.data.title)
+const displayItems = computed(() => {
+  const items = [...props.allItems]
+  items.push({ title: 'Trash Bin', img: '/img/application.png', isTrash: true }) 
+  return items
 })
+
+const currentIndex = computed(() => {
+  if (!displayItems.value || !props.data) return 0
+  if (props.data.title === 'Trash Bin') return displayItems.value.length - 1
+  return displayItems.value.findIndex(item => item.title === props.data.title)
+})
+
+const activeTitle = computed(() => props.data?.title)
+const isTrashCard = computed(() => activeTitle.value === 'Trash Bin')
 
 const totalNotesCount = computed(() => {
   let count = 0
   for (const key in notesCache.value) {
-    if (notesCache.value[key]) {
+    if (key !== 'Trash Bin' && notesCache.value[key]) {
       count += notesCache.value[key].length
     }
   }
@@ -61,59 +75,42 @@ const filteredResults = computed(() => {
   if (!searchQuery.value.trim()) return []
   const query = searchQuery.value.toLowerCase()
   const results = []
-  for (const [title, notes] of Object.entries(notesCache.value)) {
+  for (const [category, notes] of Object.entries(notesCache.value)) {
+    if (category === 'Trash Bin') continue
     notes.forEach(note => {
       if (note.content.toLowerCase().includes(query)) {
-        const item = props.allItems.find(i => i.title === title)
-        if (item) results.push({ id: note.id, title, content: note.content, item })
+        const item = props.allItems.find(i => i.title === category)
+        if (item) results.push({ id: note.id, title: category, content: note.content, item })
       }
     })
   }
   return results
 })
 
+// --- 交互处理 ---
+
 const handleCardClick = (item) => {
   if (ignoreClick.value || item.title === props.data?.title) return
   emit('switch', item)
 }
 
-// --- FLIP 动画 ---
-const performEnterAnimation = async () => {
-  if (!props.originRect) return
-  isAnimating.value = true
-  contentOpacity.value = 0
-  await nextTick()
-  const activeCard = document.querySelector('.card-wrapper.active .knowledge-card')
-  if (!activeCard) return
-  const targetRect = activeCard.getBoundingClientRect()
-  const scaleX = props.originRect.width / targetRect.width
-  const scaleY = props.originRect.height / targetRect.height
-  const translateX = props.originRect.left - targetRect.left + (props.originRect.width - targetRect.width) / 2
-  const translateY = props.originRect.top - targetRect.top + (props.originRect.height - targetRect.height) / 2
-  const wrapper = activeCard.parentElement
-  wrapper.style.transition = 'none'
-  wrapper.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`
-  activeCard.style.borderRadius = `${24 / Math.min(scaleX, scaleY)}px`
-  wrapper.offsetHeight 
-  requestAnimationFrame(() => {
-    wrapper.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'
-    wrapper.style.transform = ''
-    activeCard.style.transition = 'border-radius 0.5s'
-    activeCard.style.borderRadius = '24px'
-    setTimeout(() => { isAnimating.value = false; contentOpacity.value = 1 }, 400)
-  })
+const jumpToTrash = () => {
+  const trashItem = displayItems.value.find(i => i.title === 'Trash Bin')
+  if (trashItem) emit('switch', trashItem)
 }
 
-// --- [重构] 数据加载 ---
+// --- 数据加载 ---
 const loadAllNotes = async () => {
   try {
-    const allNotes = await api.getNotes() // 使用 API 模块
-    
+    const allNotes = await api.getNotes()
     const newCache = {}
-    props.allItems.forEach(item => { newCache[item.title] = [] }) // 初始化
+    props.allItems.forEach(item => { newCache[item.title] = [] })
+    newCache['Trash Bin'] = []
     
     allNotes.forEach(note => {
-      if (newCache[note.category]) {
+      if (note.category && note.category.startsWith('TRASH::')) {
+        newCache['Trash Bin'].push(note)
+      } else if (newCache[note.category]) {
         newCache[note.category].push(note)
       }
     })
@@ -125,49 +122,108 @@ const loadAllNotes = async () => {
 }
 
 const getCurrentNotes = (title) => notesCache.value[title] || []
-const updateLayout = () => { const w = window.innerWidth; if (w < 768) { cardWidth.value = w * 0.92; cardGap.value = 16 } else { cardWidth.value = 900; cardGap.value = 40 } }
-onMounted(() => { updateLayout(); window.addEventListener('resize', updateLayout) })
-onUnmounted(() => { window.removeEventListener('resize', updateLayout) })
 
-watch(() => props.visible, (val) => {
-  if (val) {
-    isAdding.value = false; newContent.value = ''; editingNoteId.value = null; isModifyMode.value = false; searchQuery.value = ''; isSearching.value = false; highlightedNoteId.value = null;
-    savedSearchTerm.value = '' 
-    loadAllNotes(); // 打开时加载数据
-    updateLayout(); performEnterAnimation()
-  } else { contentOpacity.value = 1 }
-})
+// --- 模式切换 ---
+const toggleDeleteMode = () => {
+  if (editingNoteId.value !== null) return 
+  isDeleteMode.value = !isDeleteMode.value
+  isModifyMode.value = false 
+  isAdding.value = false
+}
 
-// --- [重构] CRUD 操作 ---
-const activeTitle = computed(() => props.data?.title)
-const startAdd = () => { if (!activeTitle.value) return; cancelEdit(); isAdding.value = true; nextTick(() => { scrollToBottom(); const t = document.querySelector('#new-note-textarea'); if(t) t.focus(); }) }
+const toggleModifyMode = () => {
+  if (editingNoteId.value !== null) return
+  isModifyMode.value = !isModifyMode.value
+  isDeleteMode.value = false
+  isAdding.value = false
+  cancelEdit()
+}
 
-const confirmInput = async () => { 
-  if (!newContent.value.trim() || !activeTitle.value) return
-  
-  const payload = { category: activeTitle.value, content: newContent.value }
-  
-  try {
-    const savedNote = await api.createNote(payload) // 使用 API 模块
+// --- 笔记操作 ---
 
-    // UI 更新
-    if (!notesCache.value[activeTitle.value]) notesCache.value[activeTitle.value] = []
-    notesCache.value[activeTitle.value].push(savedNote)
-    
-    newContent.value = ''
-    isAdding.value = false
-    nextTick(scrollToBottom)
-    showToast('Note added successfully!') // [新增] Toast
-  } catch (e) {
-    console.error('添加笔记失败', e)
-    showToast('Failed to add note', 'error')
+const handleNoteClick = (note) => {
+  if (isTrashCard.value) return 
+  if (isDeleteMode.value) {
+    moveToTrash(note)
+  } else if (isModifyMode.value) {
+    startEdit(note)
   }
 }
 
+const handleNoteDblClick = (note) => {
+  if (isTrashCard.value || isDeleteMode.value) return 
+  startEdit(note)
+}
+
+const moveToTrash = async (note) => {
+  if (!props.isAdmin) return
+  
+  const originCat = activeTitle.value
+  notesCache.value[originCat] = notesCache.value[originCat].filter(n => n.id !== note.id)
+  if (!notesCache.value['Trash Bin']) notesCache.value['Trash Bin'] = []
+  
+  const trashNote = { ...note, category: `TRASH::${originCat}` }
+  notesCache.value['Trash Bin'].push(trashNote)
+
+  try {
+    await api.updateNote(note.id, { category: `TRASH::${originCat}` })
+    showToast('Moved to Trash')
+  } catch (e) {
+    console.error(e)
+    showToast('Failed to move note', 'error')
+    loadAllNotes()
+  }
+}
+
+const restoreNote = async (note) => {
+  const originalCategory = note.category.replace('TRASH::', '')
+  notesCache.value['Trash Bin'] = notesCache.value['Trash Bin'].filter(n => n.id !== note.id)
+  if (notesCache.value[originalCategory]) {
+    notesCache.value[originalCategory].push({ ...note, category: originalCategory })
+  }
+
+  try {
+    await api.updateNote(note.id, { category: originalCategory })
+    showToast('Note Restored!')
+  } catch (e) {
+    console.error(e)
+    loadAllNotes()
+  }
+}
+
+const permDeleteNote = async (id) => {
+  notesCache.value['Trash Bin'] = notesCache.value['Trash Bin'].filter(n => n.id !== id)
+  try {
+    await api.deleteNote(id)
+    showToast('Permanently Deleted', 'error')
+  } catch (e) {
+    console.error(e)
+    loadAllNotes()
+  }
+}
+
+const startAdd = () => { 
+  if (editingNoteId.value !== null) return;
+  cancelEdit(); isDeleteMode.value = false; isModifyMode.value = false;
+  isAdding.value = true; 
+  nextTick(() => { scrollToBottom(); const t = document.querySelector('#new-note-textarea'); if(t) t.focus(); }) 
+}
+
+const confirmInput = async () => { 
+  if (!newContent.value.trim() || !activeTitle.value) return
+  const payload = { category: activeTitle.value, content: newContent.value }
+  try {
+    const savedNote = await api.createNote(payload)
+    if (!notesCache.value[activeTitle.value]) notesCache.value[activeTitle.value] = []
+    notesCache.value[activeTitle.value].push(savedNote)
+    newContent.value = ''; isAdding.value = false; nextTick(scrollToBottom)
+    showToast('Note added!')
+  } catch (e) { console.error(e) }
+}
+
 const startEdit = (note) => { 
-  if (!props.isAdmin) return; // 权限校验
-  if (props.data.title !== activeTitle.value) return; 
-  if (isAdding.value) isAdding.value = false; 
+  if (!props.isAdmin) return;
+  isAdding.value = false; 
   editingNoteId.value = note.id; 
   editingContent.value = note.content; 
   nextTick(() => { const t = document.querySelector(`#edit-textarea-${note.id}`); if(t){ autoResize({target:t}); t.focus(); } }) 
@@ -175,81 +231,63 @@ const startEdit = (note) => {
 
 const updateNote = async () => { 
   if (!editingContent.value.trim() || !activeTitle.value) return
-  
   const list = notesCache.value[activeTitle.value]
   const index = list.findIndex(n => n.id === editingNoteId.value)
   if (index !== -1) list[index].content = editingContent.value
   
   try {
-    await api.updateNote(editingNoteId.value, { content: editingContent.value }) // 使用 API 模块
-    showToast('Note updated') // [新增] Toast
-  } catch (e) {
-    console.error('更新笔记失败', e)
-    showToast('Failed to update', 'error')
-  }
+    await api.updateNote(editingNoteId.value, { content: editingContent.value })
+    showToast('Note updated')
+  } catch(e) { console.error(e) }
   cancelEdit() 
 }
 
-const deleteNote = async (id) => { 
-  if (!activeTitle.value) return
-  notesCache.value[activeTitle.value] = notesCache.value[activeTitle.value].filter(n => n.id !== id)
-  
-  try {
-    await api.deleteNote(id) // 使用 API 模块
-    showToast('Note deleted') // [新增] Toast
-  } catch (e) {
-    console.error('删除笔记失败', e)
-    showToast('Failed to delete', 'error')
-  }
-}
-
 const cancelEdit = () => { editingNoteId.value = null; editingContent.value = '' }
-const toggleModify = () => { isModifyMode.value = !isModifyMode.value; cancelEdit(); isAdding.value = false }
+
+// --- 通用逻辑 ---
+const updateLayout = () => { const w = window.innerWidth; if (w < 768) { cardWidth.value = w * 0.92; cardGap.value = 16 } else { cardWidth.value = 900; cardGap.value = 40 } }
+onMounted(() => { updateLayout(); window.addEventListener('resize', updateLayout) })
+onUnmounted(() => { window.removeEventListener('resize', updateLayout) })
+
+watch(() => props.visible, (val) => {
+  if (val) {
+    isAdding.value = false; newContent.value = ''; editingNoteId.value = null; isModifyMode.value = false; isDeleteMode.value = false;
+    searchQuery.value = ''; isSearching.value = false; highlightedNoteId.value = null; savedSearchTerm.value = '';
+    loadAllNotes(); updateLayout(); performEnterAnimation()
+  } else { contentOpacity.value = 1 }
+})
+
+const renderContent = (content) => {
+  if (!content) return '';
+  // 确保即使没有搜索词，也会进行 Markdown 解析
+  return renderMarkdown(content, savedSearchTerm.value);
+};
 const handleDownload = () => { if (!activeTitle.value) return; let text = `# ${activeTitle.value}\n\n`; const list = notesCache.value[activeTitle.value] || []; list.forEach((note, i) => { text += `### Note ${i+1}\n${note.content}\n\n` }); const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${activeTitle.value}_Notes.md`; link.click(); }
 const enterSearchMode = () => { isSearching.value = true }; const exitSearchMode = () => { isSearching.value = false; searchQuery.value = '' }
-const handleSearchResultClick = (result) => { 
-  savedSearchTerm.value = searchQuery.value // 记录搜索词
-  emit('switch', result.item); exitSearchMode(); highlightedNoteId.value = result.id; nextTick(() => { setTimeout(() => { const noteElement = document.getElementById(`note-${result.id}`); if (noteElement) noteElement.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, 300); setTimeout(() => { highlightedNoteId.value = null }, 2000) }) 
-}
+const handleSearchResultClick = (result) => { savedSearchTerm.value = searchQuery.value; emit('switch', result.item); exitSearchMode(); highlightedNoteId.value = result.id; nextTick(() => { setTimeout(() => { const noteElement = document.getElementById(`note-${result.id}`); if (noteElement) noteElement.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, 300); setTimeout(() => { highlightedNoteId.value = null }, 2000) }) }
 const scrollToBottom = () => { const ac = document.querySelector('.card-wrapper.active .notes-scroll-area'); if(ac) ac.scrollTop = ac.scrollHeight; }
 const autoResize = (e) => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }
 const formatIndex = (i) => (i + 1).toString().padStart(2, '0')
 
-// --- 手势与点击处理 ---
-const onTouchStart = (e) => {
-  if (e.target.tagName.toLowerCase() === 'textarea' || e.target.closest('button') || e.target.closest('.global-search-container')) return
-  if (e.changedTouches) { startX.value = e.changedTouches[0].clientX; startY.value = e.changedTouches[0].clientY } else { startX.value = e.clientX; startY.value = e.clientY }
-  isDragging.value = true
+const performEnterAnimation = async () => { 
+  if (!props.originRect || isTrashCard.value) return; 
+  isAnimating.value = true; contentOpacity.value = 0; await nextTick(); const activeCard = document.querySelector('.card-wrapper.active .knowledge-card'); if (!activeCard) return; const targetRect = activeCard.getBoundingClientRect(); const scaleX = props.originRect.width / targetRect.width; const scaleY = props.originRect.height / targetRect.height; const translateX = props.originRect.left - targetRect.left + (props.originRect.width - targetRect.width) / 2; const translateY = props.originRect.top - targetRect.top + (props.originRect.height - targetRect.height) / 2; const wrapper = activeCard.parentElement; wrapper.style.transition = 'none'; wrapper.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`; activeCard.style.borderRadius = `${24 / Math.min(scaleX, scaleY)}px`; wrapper.offsetHeight; requestAnimationFrame(() => { wrapper.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'; wrapper.style.transform = ''; activeCard.style.transition = 'border-radius 0.5s'; activeCard.style.borderRadius = '24px'; setTimeout(() => { isAnimating.value = false; contentOpacity.value = 1 }, 400) }) 
 }
-const onTouchEnd = (e) => {
-  if (!isDragging.value) return; isDragging.value = false
-  const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX
-  const endY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY
-  const diffX = endX - startX.value
-  const diffY = endY - startY.value
-  
-  if (!isSearching.value) {
+
+const onTouchStart = (e) => { if (e.target.tagName.toLowerCase() === 'textarea' || e.target.closest('button') || e.target.closest('.global-search-container')) return; if (e.changedTouches) { startX.value = e.changedTouches[0].clientX; startY.value = e.changedTouches[0].clientY } else { startX.value = e.clientX; startY.value = e.clientY } isDragging.value = true }
+const onTouchEnd = (e) => { 
+  if (!isDragging.value) return; isDragging.value = false; 
+  const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX; const endY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY; const diffX = endX - startX.value; const diffY = endY - startY.value; 
+  if (!isSearching.value) { 
     if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) { 
       if (diffX < 0) switchItem('next'); else switchItem('prev'); 
-      ignoreClick.value = true; 
-      setTimeout(() => { ignoreClick.value = false }, 100); 
-      return 
-    }
-    if (diffY > 100 && Math.abs(diffY) > Math.abs(diffX)) { 
-      if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close'); return } 
-    }
-  }
-  if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) {
-    const isClickOnCard = e.target.closest('.knowledge-card')
-    const isClickOnSearch = e.target.closest('.global-search-container')
-    const isClickOnResults = e.target.closest('.search-results-list')
-    if (!isClickOnCard && !isClickOnSearch && !isClickOnResults) { 
-      if (isSearching.value) { exitSearchMode() } 
-      else { if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close') } } 
-    }
-  }
+      ignoreClick.value = true; setTimeout(() => { ignoreClick.value = false }, 100); return 
+    } 
+    if (diffY > 100 && Math.abs(diffY) > Math.abs(diffX)) { if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close'); return } } 
+  } 
+  if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) { const isClickOnCard = e.target.closest('.knowledge-card'); const isClickOnSearch = e.target.closest('.global-search-container'); const isClickOnResults = e.target.closest('.search-results-list'); if (!isClickOnCard && !isClickOnSearch && !isClickOnResults) { if (isSearching.value) { exitSearchMode() } else { if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close') } } } } 
 }
-const switchItem = (direction) => { if (!props.allItems.length) return; let nextIdx; if (direction === 'next') nextIdx = (currentIndex.value + 1) % props.allItems.length; else nextIdx = (currentIndex.value - 1 + props.allItems.length) % props.allItems.length; emit('switch', props.allItems[nextIdx]) }
+const switchItem = (direction) => { if (!displayItems.value.length) return; let nextIdx; if (direction === 'next') nextIdx = (currentIndex.value + 1) % displayItems.value.length; else nextIdx = (currentIndex.value - 1 + displayItems.value.length) % displayItems.value.length; emit('switch', displayItems.value[nextIdx]) }
 </script>
 
 <template>
@@ -264,6 +302,9 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
         <span class="search-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
         <input v-model="searchQuery" class="global-search-input" :placeholder="`Search ${totalNotesCount} notes...`" @focus="enterSearchMode" />
         <button v-if="isSearching" class="close-search-btn" @click="exitSearchMode">{{ searchQuery ? 'Clear' : 'Cancel' }}</button>
+      </div>
+      <div class="trash-bin-icon" @click="jumpToTrash" title="Recycle Bin">
+        🗑
       </div>
     </div>
     
@@ -284,7 +325,7 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
 
     <div class="carousel-track" :style="[trackStyle, { gap: cardGap + 'px' }]" :class="{ 'track-hidden': isSearching }">
       <div 
-        v-for="(item, index) in allItems" 
+        v-for="(item, index) in displayItems" 
         :key="item.title"
         class="card-wrapper"
         :style="{ width: cardWidth + 'px' }" 
@@ -295,34 +336,62 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
             <div class="card-header">
               <div class="header-left">
                 <h1 class="card-title">{{ item.title }}</h1>
-                <div class="card-icon hover-jelly"><img :src="item.img" :alt="item.title"></div>
+                <div v-if="!item.isTrash" class="card-icon hover-jelly"><img :src="item.img" :alt="item.title"></div>
               </div>
-              <div class="header-right" v-if="isAdmin && index === currentIndex">
-                <button class="fab-add-note" @click="startAdd" :disabled="isAdding || editingNoteId !== null">+</button>
+              
+              <div class="header-right" v-if="isAdmin && index === currentIndex && !item.isTrash">
+                <button 
+                  class="fab-btn fab-delete" 
+                  :class="{ active: isDeleteMode }"
+                  @click="toggleDeleteMode"
+                  :disabled="isAdding || editingNoteId !== null"
+                >−</button>
+                <button 
+                  class="fab-btn fab-add" 
+                  @click="startAdd" 
+                  :disabled="isAdding || editingNoteId !== null || isDeleteMode"
+                >+</button>
               </div>
             </div>
+
             <div class="card-body-container">
               <div class="notes-scroll-area">
                 <div class="notes-list">
                   <template v-for="(note, nIndex) in getCurrentNotes(item.title)" :key="note.id">
                     <div class="note-item-wrapper">
-                      <div class="note-index">{{ formatIndex(nIndex) }}</div>
+                      <div class="note-index" v-if="!item.isTrash">{{ formatIndex(nIndex) }}</div>
+                      
                       <div class="note-content-area">
                         <div v-if="index === currentIndex && editingNoteId === note.id" class="note-card input-card blue-border-active">
                           <button class="btn-cancel-x" @click="cancelEdit">×</button>
                           <textarea :id="`edit-textarea-${note.id}`" class="input-card-textarea" v-model="editingContent" @input="autoResize"></textarea>
                           <div class="input-actions"><button class="btn-input btn-clear" @click="editingContent = ''">Clear</button><button class="btn-input btn-confirm" @click="updateNote">Update</button></div>
                         </div>
-                        <div v-else :id="'note-' + note.id" class="note-card display-card blue-outline" :class="{ 'shake-anim': isModifyMode, 'highlight-flash': highlightedNoteId === note.id }" @dblclick="index === currentIndex && startEdit(note)">
-                          <div 
-                            class="note-content markdown-body" 
-                            v-html="renderMarkdown(note.content, savedSearchTerm)"
-                          ></div>
-                          <button v-if="isModifyMode && isAdmin" class="btn-trash" @click.stop="deleteNote(note.id)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
+                        
+                        <div 
+                          v-else 
+                          :id="'note-' + note.id" 
+                          class="note-card display-card blue-outline" 
+                          :class="{ 
+                            'danger-shake': isDeleteMode && !item.isTrash, 
+                            'highlight-flash': highlightedNoteId === note.id,
+                            'trash-item': item.isTrash 
+                          }" 
+                          @click.stop="handleNoteClick(note)"
+                          @dblclick.stop="handleNoteDblClick(note)"
+                        >
+<div class="note-content markdown-body" 
+  v-html="renderContent(note.content)"></div>
+                          
+                          <div v-if="item.isTrash" class="trash-actions">
+                            <button class="btn-restore" @click.stop="restoreNote(note)">Restore</button>
+                            <button class="btn-perm-delete" @click.stop="permDeleteNote(note.id)">Delete</button>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </template>
+
                   <div class="note-item-wrapper" v-if="index === currentIndex && isAdding">
                     <div class="note-index new-index">+</div>
                     <div class="note-card input-card blue-border-active">
@@ -331,14 +400,27 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
                       <div class="input-actions"><button class="btn-input btn-clear" @click="newContent = ''">Clear</button><button class="btn-input btn-confirm" @click="confirmInput">Confirm</button></div>
                     </div>
                   </div>
+                  
+                  <div v-if="item.isTrash && getCurrentNotes('Trash Bin').length === 0" class="empty-trash-tip">
+                    Trash is empty.
+                  </div>
                 </div>
               </div>
             </div>
+
             <div class="card-footer">
               <div class="left-actions"></div>
-              <div class="right-actions">
+              <div class="right-actions" v-if="!item.isTrash">
                 <button class="btn-primary-soft" @click="handleDownload">Download</button>
-                <button v-if="isAdmin" class="btn-primary" :class="{ 'btn-warning': isModifyMode }" @click="toggleModify">{{ isModifyMode ? 'Done' : 'Modify' }}</button>
+                <button 
+                  v-if="isAdmin" 
+                  class="btn-primary" 
+                  :class="{ 'btn-warning': isModifyMode }" 
+                  @click="toggleModifyMode"
+                  :disabled="isDeleteMode"
+                >
+                  {{ isModifyMode ? 'Done' : 'Modify' }}
+                </button>
               </div>
             </div>
           </div>
@@ -349,7 +431,7 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
 </template>
 
 <style scoped>
-/* 保持原有 style 即可 */
+/* 核心布局保持 */
 .card-content-wrapper { display: flex; flex-direction: column; height: 100%; width: 100%; }
 .knowledge-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: var(--modal-overlay); backdrop-filter: blur(20px); z-index: 2000; opacity: 0; pointer-events: none; transition: opacity 0.4s ease; overflow: hidden; }
 .knowledge-overlay.visible { opacity: 1; pointer-events: auto; }
@@ -357,10 +439,33 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
 .carousel-track.track-hidden { opacity: 0; transform: scale(0.9); pointer-events: none; filter: blur(10px); }
 .card-wrapper { flex-shrink: 0; height: 85vh; margin-top: 60px; transition: all 0.6s cubic-bezier(0.32, 0.725, 0, 1); transform: scale(0.92); opacity: 1; filter: none; }
 .card-wrapper.active { transform: scale(1); z-index: 10; }
-.global-search-container { position: absolute; top: 30px; left: 50%; transform: translateX(-50%); z-index: 100; width: 600px; max-width: 90vw; transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); }
+
+.global-search-container { 
+  position: absolute; top: 30px; left: 50%; transform: translateX(-50%); 
+  z-index: 100; width: 660px; max-width: 90vw; 
+  display: flex; align-items: center; gap: 12px;
+  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); 
+}
 .global-search-container.search-active { top: 60px; }
-.search-input-wrapper { width: 100%; height: 60px; background: var(--glass-bg); backdrop-filter: blur(30px); border: 1px solid var(--glass-border); border-radius: 20px; display: flex; align-items: center; padding: 0 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); transition: all 0.3s; }
+
+.search-input-wrapper { 
+  flex: 1; height: 60px; background: var(--glass-bg); backdrop-filter: blur(30px); 
+  border: 1px solid var(--glass-border); border-radius: 20px; 
+  display: flex; align-items: center; padding: 0 24px; 
+  box-shadow: 0 10px 40px rgba(0,0,0,0.1); transition: all 0.3s; 
+}
 .global-search-container.search-active .search-input-wrapper { background: var(--input-bg); box-shadow: 0 20px 60px rgba(0,0,0,0.2); border-color: #007aff; }
+
+.trash-bin-icon {
+  width: 50px; height: 50px; border-radius: 16px;
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-sec); cursor: pointer; transition: all 0.3s;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+  flex-shrink: 0;
+}
+.trash-bin-icon:hover { color: #ff3b30; transform: scale(1.1); background: var(--item-hover); border-color: #ff3b30; }
+
 .search-icon { opacity: 0.6; display: flex; align-items: center; color: var(--text-main); }
 .global-search-input { flex: 1; background: transparent; border: none; outline: none; font-size: 1.1rem; color: var(--text-main); margin: 0 16px; }
 .close-search-btn { background: transparent; color: #007aff; font-size: 1rem; font-weight: 600; cursor: pointer; padding: 8px 12px; border-radius: 8px; transition: background 0.2s; }
@@ -379,16 +484,50 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
 .no-res-icon { font-size: 3rem; display: block; margin-bottom: 20px; opacity: 0.5; }
 .fade-up-enter-active, .fade-up-leave-active { transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); }
 .fade-up-enter-from, .fade-up-leave-to { opacity: 0; transform: translate(-50%, 40px); }
+
 .knowledge-card { width: 100%; height: 100%; padding: 40px; display: flex; flex-direction: column; }
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid var(--glass-border); padding-bottom: 15px; flex-shrink: 0; }
-.header-left { display: flex; align-items: center; gap: 20px; }
-.card-title { font-size: 2.2rem; font-weight: 700; color: var(--text-main); }
-.card-icon { width: 50px; height: 50px; background: var(--input-bg); border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+
+/* [修复 2] 强制头部 Flex 布局不换行 */
+.card-header { 
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; 
+  border-bottom: 1px solid var(--glass-border); padding-bottom: 15px; flex-shrink: 0; 
+  flex-wrap: nowrap; /* 关键：禁止换行 */
+}
+/* 左侧标题区域：自适应宽度 */
+.header-left { 
+  display: flex; align-items: center; gap: 20px; 
+  flex: 1; min-width: 0; /* 关键：防止标题撑破布局 */
+}
+/* 右侧按钮区域：不收缩 */
+.header-right { 
+  display: flex; align-items: center; gap: 30px; /* 间距 30px */
+  flex-shrink: 0; margin-right: 10px;
+}
+
+.card-title { font-size: 2.2rem; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-icon { width: 50px; height: 50px; background: var(--input-bg); border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.05); flex-shrink: 0; }
 .card-icon img { width: 70%; height: 70%; object-fit: contain; }
 .hover-jelly:hover img { animation: jelly 0.6s both; }
-.fab-add-note { width: 50px; height: 50px; border-radius: 50%; background: var(--text-main); color: var(--app-bg); border: none; font-size: 28px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.1); transition: all 0.3s; }
-.fab-add-note:hover { transform: scale(1.1) rotate(90deg); background: var(--ios-blue); color: #fff; }
-.fab-add-note:disabled { opacity: 0.5; cursor: default; transform: none; background: var(--text-sec); }
+
+/* 统一 FAB 按钮样式 */
+.fab-btn {
+  width: 44px; height: 44px; border-radius: 50%;
+  color: #fff; border: none;
+  font-size: 26px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1); transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: static; /* 确保不乱跑 */
+  margin: 0; /* 确保无额外边距 */
+}
+.fab-add { background: var(--text-main); }
+.fab-add:hover:not(:disabled) { transform: scale(1.1) rotate(90deg); background: var(--ios-blue); }
+.fab-add:disabled { opacity: 0.3; background: var(--text-sec); transform: none; cursor: not-allowed; }
+
+.fab-delete { background: var(--text-main); font-size: 28px; }
+.fab-delete:hover:not(:disabled) { transform: scale(1.1); background: #ff3b30; }
+.fab-delete.active { background: #ff3b30; box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.3); }
+.fab-delete:disabled { opacity: 0.3; background: var(--text-sec); transform: none; cursor: not-allowed; }
+
 .card-body-container { flex: 1; display: flex; overflow: hidden; position: relative; width: 100%; }
 .notes-scroll-area { flex: 1; overflow-y: auto; padding: 4px; scrollbar-width: none; }
 .notes-scroll-area::-webkit-scrollbar { display: none; }
@@ -402,6 +541,15 @@ const switchItem = (direction) => { if (!props.allItems.length) return; let next
 .display-card { min-height: 60px; white-space: pre-wrap; line-height: 1.6; color: var(--text-main); font-size: 1rem; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .display-card:hover { border-color: #007aff; background: var(--glass-bg); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0, 122, 255, 0.1); }
 .blue-border-active { background: var(--glass-bg); border: 2px solid #007aff; box-shadow: 0 4px 20px rgba(0, 122, 255, 0.15); display: flex; flex-direction: column; gap: 12px; }
+
+.danger-shake {
+  border-color: #ff3b30 !important;
+  background: rgba(255, 59, 48, 0.08) !important;
+  animation: shake 0.3s infinite ease-in-out;
+  cursor: alias !important;
+}
+.danger-shake:hover { background: rgba(255, 59, 48, 0.15) !important; transform: scale(0.98); }
+
 .btn-trash { flex-shrink: 0; width: 32px; height: 32px; border-radius: 8px; background: rgba(255, 59, 48, 0.1); color: #ff3b30; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; margin-top: -4px; }
 .btn-trash:hover { background: #ff3b30; color: #fff; transform: scale(1.1); }
 .btn-cancel-x { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border-radius: 50%; background: rgba(0,0,0,0.05); color: var(--text-sec); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; transition: all 0.2s; }
@@ -428,23 +576,27 @@ button { border: none; transition: all 0.2s; }
 @keyframes popIn { from { opacity: 0; transform: scale(0.9) translateY(10px); } to { opacity: 1; transform: scale(1); } }
 @keyframes jelly { 0%, 100% { transform: scale(1, 1); } 30% { transform: scale(1.25, 0.75); } 40% { transform: scale(0.75, 1.25); } 50% { transform: scale(1.15, 0.85); } 65% { transform: scale(0.95, 1.05); } 75% { transform: scale(1.05, 0.95); } }
 @keyframes shake { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(0.5deg); } 75% { transform: rotate(-0.5deg); } }
+
+.trash-item { opacity: 0.7; }
+.trash-actions { margin-top: 10px; display: flex; gap: 10px; }
+.btn-restore { background: #34c759; color: white; padding: 4px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+.btn-perm-delete { background: #ff3b30; color: white; padding: 4px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+.empty-trash-tip { text-align: center; color: var(--text-sec); margin-top: 40px; font-size: 1.1rem; }
+
 @media (max-width: 768px) {
   .knowledge-card { padding: 24px 20px !important; }
   .global-search-container { width: 90vw !important; top: 50px; }
   .search-results-layer { width: 90vw !important; top: 110px; }
-  
   .card-header { flex-direction: row; align-items: center; padding-bottom: 12px; margin-bottom: 16px; }
   .card-title { font-size: 1.8rem; }
   .card-icon { width: 40px; height: 40px; }
-  
   .note-item-wrapper { gap: 12px; }
   .note-index { font-size: 1rem; width: 24px; margin-top: 2px; }
   .note-content { font-size: 0.95rem; line-height: 1.5; }
-  
   .card-footer { margin-top: 10px; }
   .right-actions { width: 100%; justify-content: space-between; }
   .right-actions button { padding: 10px 16px; font-size: 14px; flex: 1; text-align: center; }
-  
   .card-body-container { height: auto; }
+  .trash-bin-icon { top: 30px; right: 20px; width: 36px; height: 36px; }
 }
 </style>
