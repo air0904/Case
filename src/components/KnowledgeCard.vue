@@ -24,6 +24,7 @@ const editingContent = ref('')
 // 模式控制
 const isModifyMode = ref(false) 
 const isDeleteMode = ref(false) 
+const isSortMode = ref(false)
 
 const searchQuery = ref('')
 const isSearching = ref(false)
@@ -39,6 +40,8 @@ const cardWidth = ref(900)
 const cardGap = ref(40)
 const isAnimating = ref(false)
 const contentOpacity = ref(1)
+
+const dragStartIndex = ref(null)
 
 // --- 计算属性 ---
 const displayItems = computed(() => {
@@ -88,7 +91,6 @@ const filteredResults = computed(() => {
 })
 
 // --- 交互处理 ---
-
 const handleCardClick = (item) => {
   if (ignoreClick.value || item.title === props.data?.title) return
   emit('switch', item)
@@ -127,22 +129,28 @@ const getCurrentNotes = (title) => notesCache.value[title] || []
 const toggleDeleteMode = () => {
   if (editingNoteId.value !== null) return 
   isDeleteMode.value = !isDeleteMode.value
-  isModifyMode.value = false 
+  isModifyMode.value = false; isSortMode.value = false
   isAdding.value = false
 }
 
 const toggleModifyMode = () => {
   if (editingNoteId.value !== null) return
   isModifyMode.value = !isModifyMode.value
-  isDeleteMode.value = false
+  isDeleteMode.value = false; isSortMode.value = false
   isAdding.value = false
   cancelEdit()
 }
 
-// --- 笔记操作 ---
+const toggleSortMode = () => {
+  if (editingNoteId.value !== null) return
+  isSortMode.value = !isSortMode.value
+  isDeleteMode.value = false; isModifyMode.value = false
+  isAdding.value = false
+}
 
+// --- 笔记操作 ---
 const handleNoteClick = (note) => {
-  if (isTrashCard.value) return 
+  if (isTrashCard.value || isSortMode.value) return 
   if (isDeleteMode.value) {
     moveToTrash(note)
   } else if (isModifyMode.value) {
@@ -151,13 +159,23 @@ const handleNoteClick = (note) => {
 }
 
 const handleNoteDblClick = (note) => {
-  if (isTrashCard.value || isDeleteMode.value) return 
+  if (isTrashCard.value || isDeleteMode.value || isSortMode.value) return 
   startEdit(note)
+}
+
+const onDragStart = (index) => { dragStartIndex.value = index }
+const onDrop = async (dropIndex) => {
+  if (dragStartIndex.value === null || dragStartIndex.value === dropIndex) return
+  const currentList = notesCache.value[activeTitle.value]
+  const itemToMove = currentList[dragStartIndex.value]
+  currentList.splice(dragStartIndex.value, 1)
+  currentList.splice(dropIndex, 0, itemToMove)
+  dragStartIndex.value = null
+  showToast('Order updated')
 }
 
 const moveToTrash = async (note) => {
   if (!props.isAdmin) return
-  
   const originCat = activeTitle.value
   notesCache.value[originCat] = notesCache.value[originCat].filter(n => n.id !== note.id)
   if (!notesCache.value['Trash Bin']) notesCache.value['Trash Bin'] = []
@@ -181,7 +199,6 @@ const restoreNote = async (note) => {
   if (notesCache.value[originalCategory]) {
     notesCache.value[originalCategory].push({ ...note, category: originalCategory })
   }
-
   try {
     await api.updateNote(note.id, { category: originalCategory })
     showToast('Note Restored!')
@@ -204,7 +221,7 @@ const permDeleteNote = async (id) => {
 
 const startAdd = () => { 
   if (editingNoteId.value !== null) return;
-  cancelEdit(); isDeleteMode.value = false; isModifyMode.value = false;
+  cancelEdit(); isDeleteMode.value = false; isModifyMode.value = false; isSortMode.value = false;
   isAdding.value = true; 
   nextTick(() => { scrollToBottom(); const t = document.querySelector('#new-note-textarea'); if(t) t.focus(); }) 
 }
@@ -234,7 +251,6 @@ const updateNote = async () => {
   const list = notesCache.value[activeTitle.value]
   const index = list.findIndex(n => n.id === editingNoteId.value)
   if (index !== -1) list[index].content = editingContent.value
-  
   try {
     await api.updateNote(editingNoteId.value, { content: editingContent.value })
     showToast('Note updated')
@@ -244,24 +260,83 @@ const updateNote = async () => {
 
 const cancelEdit = () => { editingNoteId.value = null; editingContent.value = '' }
 
-// --- 通用逻辑 ---
 const updateLayout = () => { const w = window.innerWidth; if (w < 768) { cardWidth.value = w * 0.92; cardGap.value = 16 } else { cardWidth.value = 900; cardGap.value = 40 } }
 onMounted(() => { updateLayout(); window.addEventListener('resize', updateLayout) })
 onUnmounted(() => { window.removeEventListener('resize', updateLayout) })
 
 watch(() => props.visible, (val) => {
   if (val) {
-    isAdding.value = false; newContent.value = ''; editingNoteId.value = null; isModifyMode.value = false; isDeleteMode.value = false;
+    isAdding.value = false; newContent.value = ''; editingNoteId.value = null; 
+    isModifyMode.value = false; isDeleteMode.value = false; isSortMode.value = false;
     searchQuery.value = ''; isSearching.value = false; highlightedNoteId.value = null; savedSearchTerm.value = '';
     loadAllNotes(); updateLayout(); performEnterAnimation()
   } else { contentOpacity.value = 1 }
 })
 
+// [Markdown] 注入 Copy 按钮
 const renderContent = (content) => {
   if (!content) return '';
-  // 确保即使没有搜索词，也会进行 Markdown 解析
-  return renderMarkdown(content, savedSearchTerm.value);
-};
+  let html = renderMarkdown(content, savedSearchTerm.value);
+  html = html.replace(/(<pre\b[^>]*>[\s\S]*?<\/pre>)/gi, '<div class="code-block-wrapper"><button class="copy-code-btn" data-copy>Copy</button>$1</div>');
+  return html;
+}
+
+// [修复 2] 健壮的复制逻辑
+const handleContentClick = (e) => {
+  // 仅处理 Copy 按钮点击
+  if (e.target.matches('[data-copy]')) {
+    e.stopPropagation(); // 防止冒泡触发卡片翻页
+    const btn = e.target;
+    const wrapper = btn.closest('.code-block-wrapper');
+    const codeElement = wrapper?.querySelector('code');
+    
+    if (codeElement) {
+      const codeText = codeElement.innerText;
+      
+      const copyToClipboard = (text) => {
+        // 方案 A: 现代 API
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text);
+        }
+        // 方案 B: 降级方案 (textarea)
+        return new Promise((resolve, reject) => {
+          try {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed"; // 避免滚动到底部
+            textArea.style.opacity = "0";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      };
+
+      copyToClipboard(codeText).then(() => {
+        const originalText = btn.innerText;
+        btn.innerText = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.innerText = originalText;
+          btn.classList.remove('copied');
+        }, 2000);
+      }).catch(err => {
+        console.error('Copy failed', err);
+        showToast('Copy failed: ' + err, 'error');
+      });
+    }
+  }
+}
+
+const getTrashOrigin = (category) => {
+  return category.startsWith('TRASH::') ? category.replace('TRASH::', '') : 'Unknown';
+}
+
 const handleDownload = () => { if (!activeTitle.value) return; let text = `# ${activeTitle.value}\n\n`; const list = notesCache.value[activeTitle.value] || []; list.forEach((note, i) => { text += `### Note ${i+1}\n${note.content}\n\n` }); const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' }); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${activeTitle.value}_Notes.md`; link.click(); }
 const enterSearchMode = () => { isSearching.value = true }; const exitSearchMode = () => { isSearching.value = false; searchQuery.value = '' }
 const handleSearchResultClick = (result) => { savedSearchTerm.value = searchQuery.value; emit('switch', result.item); exitSearchMode(); highlightedNoteId.value = result.id; nextTick(() => { setTimeout(() => { const noteElement = document.getElementById(`note-${result.id}`); if (noteElement) noteElement.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, 300); setTimeout(() => { highlightedNoteId.value = null }, 2000) }) }
@@ -274,7 +349,14 @@ const performEnterAnimation = async () => {
   isAnimating.value = true; contentOpacity.value = 0; await nextTick(); const activeCard = document.querySelector('.card-wrapper.active .knowledge-card'); if (!activeCard) return; const targetRect = activeCard.getBoundingClientRect(); const scaleX = props.originRect.width / targetRect.width; const scaleY = props.originRect.height / targetRect.height; const translateX = props.originRect.left - targetRect.left + (props.originRect.width - targetRect.width) / 2; const translateY = props.originRect.top - targetRect.top + (props.originRect.height - targetRect.height) / 2; const wrapper = activeCard.parentElement; wrapper.style.transition = 'none'; wrapper.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scaleX}, ${scaleY})`; activeCard.style.borderRadius = `${24 / Math.min(scaleX, scaleY)}px`; wrapper.offsetHeight; requestAnimationFrame(() => { wrapper.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)'; wrapper.style.transform = ''; activeCard.style.transition = 'border-radius 0.5s'; activeCard.style.borderRadius = '24px'; setTimeout(() => { isAnimating.value = false; contentOpacity.value = 1 }, 400) }) 
 }
 
-const onTouchStart = (e) => { if (e.target.tagName.toLowerCase() === 'textarea' || e.target.closest('button') || e.target.closest('.global-search-container')) return; if (e.changedTouches) { startX.value = e.changedTouches[0].clientX; startY.value = e.changedTouches[0].clientY } else { startX.value = e.clientX; startY.value = e.clientY } isDragging.value = true }
+const onTouchStart = (e) => { 
+  // [修复 1] 触摸开始时忽略垃圾桶图标和复制按钮
+  if (e.target.closest('.trash-bin-fixed') || e.target.closest('.copy-code-btn')) return;
+  if (e.target.tagName.toLowerCase() === 'textarea' || e.target.closest('button') || e.target.closest('.global-search-container')) return; 
+  if (e.changedTouches) { startX.value = e.changedTouches[0].clientX; startY.value = e.changedTouches[0].clientY } else { startX.value = e.clientX; startY.value = e.clientY } 
+  isDragging.value = true 
+}
+
 const onTouchEnd = (e) => { 
   if (!isDragging.value) return; isDragging.value = false; 
   const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX; const endY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY; const diffX = endX - startX.value; const diffY = endY - startY.value; 
@@ -285,7 +367,13 @@ const onTouchEnd = (e) => {
     } 
     if (diffY > 100 && Math.abs(diffY) > Math.abs(diffX)) { if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close'); return } } 
   } 
-  if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) { const isClickOnCard = e.target.closest('.knowledge-card'); const isClickOnSearch = e.target.closest('.global-search-container'); const isClickOnResults = e.target.closest('.search-results-list'); if (!isClickOnCard && !isClickOnSearch && !isClickOnResults) { if (isSearching.value) { exitSearchMode() } else { if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close') } } } } 
+  if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) { 
+    // [修复 1] 点击结束时也排除垃圾桶和复制按钮
+    if (e.target.closest('.trash-bin-fixed') || e.target.closest('.copy-code-btn')) return;
+    
+    const isClickOnCard = e.target.closest('.knowledge-card'); const isClickOnSearch = e.target.closest('.global-search-container'); const isClickOnResults = e.target.closest('.search-results-list'); 
+    if (!isClickOnCard && !isClickOnSearch && !isClickOnResults) { if (isSearching.value) { exitSearchMode() } else { if (!isModifyMode.value && !isAdding.value && editingNoteId.value === null) { emit('close') } } } 
+  } 
 }
 const switchItem = (direction) => { if (!displayItems.value.length) return; let nextIdx; if (direction === 'next') nextIdx = (currentIndex.value + 1) % displayItems.value.length; else nextIdx = (currentIndex.value - 1 + displayItems.value.length) % displayItems.value.length; emit('switch', displayItems.value[nextIdx]) }
 </script>
@@ -297,14 +385,13 @@ const switchItem = (direction) => { if (!displayItems.value.length) return; let 
     @mousedown="onTouchStart" @mouseup="onTouchEnd"
     @touchstart="onTouchStart" @touchend="onTouchEnd"
   >
+    <div class="trash-bin-fixed" @click.stop="jumpToTrash" title="Recycle Bin">🗑️</div>
+
     <div class="global-search-container" :class="{ 'search-active': isSearching }" :style="{ opacity: contentOpacity, transition: 'opacity 0.3s' }" @mousedown.stop @touchstart.stop>
       <div class="search-input-wrapper">
         <span class="search-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
         <input v-model="searchQuery" class="global-search-input" :placeholder="`Search ${totalNotesCount} notes...`" @focus="enterSearchMode" />
         <button v-if="isSearching" class="close-search-btn" @click="exitSearchMode">{{ searchQuery ? 'Clear' : 'Cancel' }}</button>
-      </div>
-      <div class="trash-bin-icon" @click="jumpToTrash" title="Recycle Bin">
-        🗑
       </div>
     </div>
     
@@ -340,17 +427,11 @@ const switchItem = (direction) => { if (!displayItems.value.length) return; let 
               </div>
               
               <div class="header-right" v-if="isAdmin && index === currentIndex && !item.isTrash">
-                <button 
-                  class="fab-btn fab-delete" 
-                  :class="{ active: isDeleteMode }"
-                  @click="toggleDeleteMode"
-                  :disabled="isAdding || editingNoteId !== null"
-                >−</button>
-                <button 
-                  class="fab-btn fab-add" 
-                  @click="startAdd" 
-                  :disabled="isAdding || editingNoteId !== null || isDeleteMode"
-                >+</button>
+                <button class="fab-btn fab-sort" :class="{ active: isSortMode }" @click="toggleSortMode" :disabled="isAdding || editingNoteId !== null || isDeleteMode">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 15l5 5 5-5"/><path d="M7 9l5-5 5 5"/></svg>
+                </button>
+                <button class="fab-btn fab-delete" :class="{ active: isDeleteMode }" @click="toggleDeleteMode" :disabled="isAdding || editingNoteId !== null || isSortMode">−</button>
+                <button class="fab-btn fab-add" @click="startAdd" :disabled="isAdding || editingNoteId !== null || isDeleteMode || isSortMode">+</button>
               </div>
             </div>
 
@@ -358,7 +439,14 @@ const switchItem = (direction) => { if (!displayItems.value.length) return; let 
               <div class="notes-scroll-area">
                 <div class="notes-list">
                   <template v-for="(note, nIndex) in getCurrentNotes(item.title)" :key="note.id">
-                    <div class="note-item-wrapper">
+                    <div 
+                      class="note-item-wrapper"
+                      :draggable="isSortMode"
+                      @dragstart="onDragStart(nIndex)"
+                      @dragover.prevent
+                      @drop="onDrop(nIndex)"
+                      :class="{ 'sort-moving': isSortMode }"
+                    >
                       <div class="note-index" v-if="!item.isTrash">{{ formatIndex(nIndex) }}</div>
                       
                       <div class="note-content-area">
@@ -372,16 +460,13 @@ const switchItem = (direction) => { if (!displayItems.value.length) return; let 
                           v-else 
                           :id="'note-' + note.id" 
                           class="note-card display-card blue-outline" 
-                          :class="{ 
-                            'danger-shake': isDeleteMode && !item.isTrash, 
-                            'highlight-flash': highlightedNoteId === note.id,
-                            'trash-item': item.isTrash 
-                          }" 
+                          :class="{ 'danger-shake': isDeleteMode && !item.isTrash, 'highlight-flash': highlightedNoteId === note.id, 'trash-item': item.isTrash }" 
                           @click.stop="handleNoteClick(note)"
                           @dblclick.stop="handleNoteDblClick(note)"
                         >
-<div class="note-content markdown-body" 
-  v-html="renderContent(note.content)"></div>
+                          <div v-if="item.isTrash" class="note-badges"><span class="category-badge">{{ getTrashOrigin(note.category) }}</span></div>
+                          
+                          <div class="note-content markdown-body" v-html="renderContent(note.content)" @click="handleContentClick"></div>
                           
                           <div v-if="item.isTrash" class="trash-actions">
                             <button class="btn-restore" @click.stop="restoreNote(note)">Restore</button>
@@ -412,15 +497,7 @@ const switchItem = (direction) => { if (!displayItems.value.length) return; let 
               <div class="left-actions"></div>
               <div class="right-actions" v-if="!item.isTrash">
                 <button class="btn-primary-soft" @click="handleDownload">Download</button>
-                <button 
-                  v-if="isAdmin" 
-                  class="btn-primary" 
-                  :class="{ 'btn-warning': isModifyMode }" 
-                  @click="toggleModifyMode"
-                  :disabled="isDeleteMode"
-                >
-                  {{ isModifyMode ? 'Done' : 'Modify' }}
-                </button>
+                <button v-if="isAdmin" class="btn-primary" :class="{ 'btn-warning': isModifyMode }" @click="toggleModifyMode" :disabled="isDeleteMode || isSortMode">{{ isModifyMode ? 'Done' : 'Modify' }}</button>
               </div>
             </div>
           </div>
@@ -431,7 +508,26 @@ const switchItem = (direction) => { if (!displayItems.value.length) return; let 
 </template>
 
 <style scoped>
-/* 核心布局保持 */
+/* [修改 1] 垃圾桶图标：纯 Emoji, 固定右上角, 无背景 */
+.trash-bin-fixed {
+  position: fixed;
+  top: 30px;
+  right: 30px;
+  z-index: 200;
+  font-size: 3rem; /* 放大 */
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));
+}
+.trash-bin-fixed:hover {
+  transform: scale(1.2) rotate(10deg);
+  filter: drop-shadow(0 8px 12px rgba(0,0,0,0.2));
+}
+
+/* 基础布局 */
 .card-content-wrapper { display: flex; flex-direction: column; height: 100%; width: 100%; }
 .knowledge-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: var(--modal-overlay); backdrop-filter: blur(20px); z-index: 2000; opacity: 0; pointer-events: none; transition: opacity 0.4s ease; overflow: hidden; }
 .knowledge-overlay.visible { opacity: 1; pointer-events: auto; }
@@ -440,31 +536,10 @@ const switchItem = (direction) => { if (!displayItems.value.length) return; let 
 .card-wrapper { flex-shrink: 0; height: 85vh; margin-top: 60px; transition: all 0.6s cubic-bezier(0.32, 0.725, 0, 1); transform: scale(0.92); opacity: 1; filter: none; }
 .card-wrapper.active { transform: scale(1); z-index: 10; }
 
-.global-search-container { 
-  position: absolute; top: 30px; left: 50%; transform: translateX(-50%); 
-  z-index: 100; width: 660px; max-width: 90vw; 
-  display: flex; align-items: center; gap: 12px;
-  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); 
-}
+.global-search-container { position: absolute; top: 30px; left: 50%; transform: translateX(-50%); z-index: 100; width: 660px; max-width: 90vw; display: flex; align-items: center; transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); }
 .global-search-container.search-active { top: 60px; }
-
-.search-input-wrapper { 
-  flex: 1; height: 60px; background: var(--glass-bg); backdrop-filter: blur(30px); 
-  border: 1px solid var(--glass-border); border-radius: 20px; 
-  display: flex; align-items: center; padding: 0 24px; 
-  box-shadow: 0 10px 40px rgba(0,0,0,0.1); transition: all 0.3s; 
-}
+.search-input-wrapper { flex: 1; height: 60px; background: var(--glass-bg); backdrop-filter: blur(30px); border: 1px solid var(--glass-border); border-radius: 20px; display: flex; align-items: center; padding: 0 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); transition: all 0.3s; }
 .global-search-container.search-active .search-input-wrapper { background: var(--input-bg); box-shadow: 0 20px 60px rgba(0,0,0,0.2); border-color: #007aff; }
-
-.trash-bin-icon {
-  width: 50px; height: 50px; border-radius: 16px;
-  background: var(--glass-bg); border: 1px solid var(--glass-border);
-  display: flex; align-items: center; justify-content: center;
-  color: var(--text-sec); cursor: pointer; transition: all 0.3s;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.05);
-  flex-shrink: 0;
-}
-.trash-bin-icon:hover { color: #ff3b30; transform: scale(1.1); background: var(--item-hover); border-color: #ff3b30; }
 
 .search-icon { opacity: 0.6; display: flex; align-items: center; color: var(--text-main); }
 .global-search-input { flex: 1; background: transparent; border: none; outline: none; font-size: 1.1rem; color: var(--text-main); margin: 0 16px; }
@@ -486,69 +561,121 @@ const switchItem = (direction) => { if (!displayItems.value.length) return; let 
 .fade-up-enter-from, .fade-up-leave-to { opacity: 0; transform: translate(-50%, 40px); }
 
 .knowledge-card { width: 100%; height: 100%; padding: 40px; display: flex; flex-direction: column; }
-
-/* [修复 2] 强制头部 Flex 布局不换行 */
-.card-header { 
-  display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; 
-  border-bottom: 1px solid var(--glass-border); padding-bottom: 15px; flex-shrink: 0; 
-  flex-wrap: nowrap; /* 关键：禁止换行 */
-}
-/* 左侧标题区域：自适应宽度 */
-.header-left { 
-  display: flex; align-items: center; gap: 20px; 
-  flex: 1; min-width: 0; /* 关键：防止标题撑破布局 */
-}
-/* 右侧按钮区域：不收缩 */
-.header-right { 
-  display: flex; align-items: center; gap: 30px; /* 间距 30px */
-  flex-shrink: 0; margin-right: 10px;
-}
-
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid var(--glass-border); padding-bottom: 15px; flex-shrink: 0; flex-wrap: nowrap; }
+.header-left { display: flex; align-items: center; gap: 20px; flex: 1; min-width: 0; }
+.header-right { display: flex; align-items: center; gap: 30px; flex-shrink: 0; margin-right: 10px; }
 .card-title { font-size: 2.2rem; font-weight: 700; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-icon { width: 50px; height: 50px; background: var(--input-bg); border-radius: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.05); flex-shrink: 0; }
 .card-icon img { width: 70%; height: 70%; object-fit: contain; }
 .hover-jelly:hover img { animation: jelly 0.6s both; }
 
-/* 统一 FAB 按钮样式 */
-.fab-btn {
-  width: 44px; height: 44px; border-radius: 50%;
-  color: #fff; border: none;
-  font-size: 26px; line-height: 1; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1); transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-  position: static; /* 确保不乱跑 */
-  margin: 0; /* 确保无额外边距 */
-}
+.fab-btn { width: 44px; height: 44px; border-radius: 50%; color: #fff; border: none; font-size: 26px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.1); transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); position: static; margin: 0; }
 .fab-add { background: var(--text-main); }
 .fab-add:hover:not(:disabled) { transform: scale(1.1) rotate(90deg); background: var(--ios-blue); }
 .fab-add:disabled { opacity: 0.3; background: var(--text-sec); transform: none; cursor: not-allowed; }
-
 .fab-delete { background: var(--text-main); font-size: 28px; }
 .fab-delete:hover:not(:disabled) { transform: scale(1.1); background: #ff3b30; }
 .fab-delete.active { background: #ff3b30; box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.3); }
 .fab-delete:disabled { opacity: 0.3; background: var(--text-sec); transform: none; cursor: not-allowed; }
+.fab-sort { background: var(--text-main); font-size: 20px; }
+.fab-sort:hover:not(:disabled) { transform: scale(1.1); background: #34c759; }
+.fab-sort.active { background: #34c759; box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.3); }
+.fab-sort:disabled { opacity: 0.3; background: var(--text-sec); transform: none; cursor: not-allowed; }
 
 .card-body-container { flex: 1; display: flex; overflow: hidden; position: relative; width: 100%; }
 .notes-scroll-area { flex: 1; overflow-y: auto; padding: 4px; scrollbar-width: none; }
 .notes-scroll-area::-webkit-scrollbar { display: none; }
 .notes-list { display: flex; flex-direction: column; gap: 20px; padding-bottom: 40px; }
-.note-item-wrapper { display: flex; align-items: flex-start; gap: 20px; }
+.note-item-wrapper { display: flex; align-items: flex-start; gap: 20px; transition: transform 0.2s; }
+.sort-moving { cursor: grab; }
+.sort-moving:active { cursor: grabbing; transform: scale(1.01); }
+
 .note-index { flex-shrink: 0; width: 40px; text-align: right; font-size: 1.5rem; font-weight: 700; color: var(--text-sec); opacity: 0.3; font-family: 'SF Mono', monospace; line-height: 1.6; }
 .new-index { color: var(--ios-blue); opacity: 0.8; }
 .note-content-area { flex: 1; min-width: 0; }
 .note-card { width: 100%; border-radius: 16px; background: var(--input-bg); padding: 20px; position: relative; transition: all 0.3s; animation: popIn 0.3s; }
 .blue-outline { border: 1px solid rgba(0, 122, 255, 0.3); cursor: default; }
-.display-card { min-height: 60px; white-space: pre-wrap; line-height: 1.6; color: var(--text-main); font-size: 1rem; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.display-card { min-height: 60px; white-space: pre-wrap; line-height: 1.6; color: var(--text-main); font-size: 1rem; display: flex; flex-direction: column; gap: 10px; }
 .display-card:hover { border-color: #007aff; background: var(--glass-bg); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0, 122, 255, 0.1); }
 .blue-border-active { background: var(--glass-bg); border: 2px solid #007aff; box-shadow: 0 4px 20px rgba(0, 122, 255, 0.15); display: flex; flex-direction: column; gap: 12px; }
 
-.danger-shake {
-  border-color: #ff3b30 !important;
-  background: rgba(255, 59, 48, 0.08) !important;
-  animation: shake 0.3s infinite ease-in-out;
-  cursor: alias !important;
-}
+.danger-shake { border-color: #ff3b30 !important; background: rgba(255, 59, 48, 0.08) !important; animation: shake 0.3s infinite ease-in-out; cursor: alias !important; }
 .danger-shake:hover { background: rgba(255, 59, 48, 0.15) !important; transform: scale(0.98); }
+
+.note-badges { margin-bottom: 8px; }
+.category-badge { font-size: 0.75rem; font-weight: 700; color: #fff; background: var(--text-sec); padding: 2px 8px; border-radius: 4px; opacity: 0.7; }
+
+/* [修复 2] 深度优化 Markdown 样式 */
+.note-content.markdown-body {
+  font-size: 1.05rem; 
+  line-height: 1.75;
+  color: var(--text-main);
+  overflow-wrap: break-word; 
+  word-break: break-word;
+  user-select: text; /* 启用文本选择 */
+  cursor: auto;      /* 恢复光标 */
+}
+
+/* 标题样式 */
+:deep(.markdown-body h1) { font-size: 1.4em; margin: 1em 0 0.5em; font-weight: 700; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.3em; }
+:deep(.markdown-body h2) { font-size: 1.25em; margin: 1.2em 0 0.5em; font-weight: 700; }
+:deep(.markdown-body h3) { font-size: 1.1em; margin: 1em 0 0.5em; font-weight: 600; }
+:deep(.markdown-body p) { margin-bottom: 0.8em; }
+:deep(.markdown-body ul), :deep(.markdown-body ol) { margin-bottom: 0.8em; padding-left: 1.5em; }
+:deep(.markdown-body li) { margin-bottom: 0.2em; }
+
+/* 代码块容器 (Mac 风格) */
+:deep(.code-block-wrapper) {
+  position: relative;
+  margin: 1.2em 0;
+  border-radius: 12px;
+  background: #282c34;
+  border: 1px solid rgba(0,0,0,0.1);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  overflow: hidden;
+}
+
+/* 代码内容 */
+:deep(.markdown-body pre) {
+  margin: 0;
+  padding: 16px;
+  padding-top: 40px; /* 留出按钮空间 */
+  overflow-x: auto;
+  background: transparent;
+  color: #abb2bf;
+  font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+/* 行内代码 */
+:deep(.markdown-body code:not(pre code)) {
+  background: rgba(120, 120, 128, 0.15);
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-family: 'SF Mono', monospace;
+  font-size: 0.9em;
+  color: #d63384; 
+}
+
+/* 复制按钮 */
+:deep(.copy-code-btn) {
+  position: absolute;
+  top: 8px; right: 10px;
+  background: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.8);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  z-index: 10;
+}
+:deep(.copy-code-btn:hover) { background: rgba(255,255,255,0.2); color: #fff; }
+:deep(.copy-code-btn.copied) { background: #34c759; color: #fff; border-color: #34c759; }
 
 .btn-trash { flex-shrink: 0; width: 32px; height: 32px; border-radius: 8px; background: rgba(255, 59, 48, 0.1); color: #ff3b30; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; margin-top: -4px; }
 .btn-trash:hover { background: #ff3b30; color: #fff; transform: scale(1.1); }
@@ -597,6 +724,6 @@ button { border: none; transition: all 0.2s; }
   .right-actions { width: 100%; justify-content: space-between; }
   .right-actions button { padding: 10px 16px; font-size: 14px; flex: 1; text-align: center; }
   .card-body-container { height: auto; }
-  .trash-bin-icon { top: 30px; right: 20px; width: 36px; height: 36px; }
+  .trash-bin-fixed { top: 30px; right: 20px; font-size: 2.5rem; }
 }
 </style>
