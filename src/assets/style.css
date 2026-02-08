@@ -67,7 +67,7 @@
 @keyframes popIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
 
 /* --- 3. 全局重置 --- */
-* { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; user-select: none; }
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
 input, textarea { user-select: auto !important; -webkit-user-select: auto !important; }
 ul, li { list-style: none; }
 
@@ -236,6 +236,9 @@ body {
 .nav-indicator.animate-jelly { animation: jelly 0.5s; }
 .nav-item { position: relative; z-index: 2; padding: 10px 32px; font-size: 0.9rem; font-weight: 600; color: #86868b; cursor: pointer; transition: color 0.3s; }
 .nav-item.active { color: #fff; }
+ .nav-item, .fab-add, .btn-primary, .btn-secondary, .btn-danger, .btn-confirm, .btn-link, .user-profile {
+    user-select: none;
+  }
 
 /* 头部 Header 容器 (新) */
 .header-bar {
