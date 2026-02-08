@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "test": "vitest run"
   },
   "dependencies": {
     "dompurify": "^3.3.1",
@@ -17,7 +20,12 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.1",
-    "vite": "npm:rolldown-vite@7.2.5"
+    "@eslint/js": "^9.33.0",
+    "eslint": "^9.33.0",
+    "eslint-plugin-vue": "^10.4.0",
+    "prettier": "^3.6.2",
+    "vite": "npm:rolldown-vite@7.2.5",
+    "vitest": "^3.2.4"
   },
   "overrides": {
     "vite": "npm:rolldown-vite@7.2.5"

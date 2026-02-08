@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import DOMPurify from 'dompurify'
 
 const props = defineProps({
   cases: { type: Array, default: () => [] },
@@ -9,14 +10,23 @@ const props = defineProps({
 const emit = defineEmits(['create', 'view', 'delete'])
 
 const searchQuery = ref('')
+const debouncedQuery = ref('')
+let debounceTimer = null
 const priorityWeight = { 'high': 3, 'medium': 2, 'low': 1 }
 
 // ... (computed 逻辑保持不变) ...
+watch(searchQuery, (value) => {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    debouncedQuery.value = value
+  }, 250)
+})
+
 const processedCases = computed(() => {
   if (!Array.isArray(props.cases)) return []
   let result = [...props.cases]
-  if (searchQuery.value.trim()) {
-    const query = searchQuery.value.toLowerCase()
+  if (debouncedQuery.value.trim()) {
+    const query = debouncedQuery.value.toLowerCase()
     result = result.filter(item => 
       (item.title || '').toLowerCase().includes(query) ||
       (item.category || '').toLowerCase().includes(query) ||
@@ -63,12 +73,25 @@ const handleCardClick = (item, event) => {
 }
 
 // [新增] 实时高亮函数
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const escapeHtml = (value) => value
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
+
 const highlightText = (text) => {
   if (!text) return ''
-  if (!searchQuery.value.trim()) return text
-  // 使用正则替换，包裹 .highlight-text
-  const reg = new RegExp(`(${searchQuery.value})`, 'gi')
-  return text.replace(reg, '<span class="highlight-text">$1</span>')
+  if (!debouncedQuery.value.trim()) return escapeHtml(text)
+  const keyword = escapeRegExp(debouncedQuery.value.trim())
+  const reg = new RegExp(`(${keyword})`, 'gi')
+  const safeText = escapeHtml(text)
+  const highlighted = safeText.replace(reg, '<span class="highlight-text">$1</span>')
+  return DOMPurify.sanitize(highlighted, {
+    ALLOWED_TAGS: ['span'],
+    ALLOWED_ATTR: ['class']
+  })
 }
 </script>
 

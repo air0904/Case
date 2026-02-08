@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import AuthOverlay from './components/AuthOverlay.vue'
 import UserProfile from './components/UserProfile.vue'
 import BasicsCard from './components/BasicsCard.vue'
@@ -7,27 +7,16 @@ import CasesCard from './components/CasesCard.vue'
 import CaseModal from './components/CaseModal.vue'
 import ThemeToggle from './components/ThemeToggle.vue'
 import KnowledgeCard from './components/KnowledgeCard.vue'
-import Toast from './components/Toast.vue' // [新增 1]
-import api from './services/api'
-import { showToast } from './utils/toast' // [新增 2]
+import Toast from './components/Toast.vue'
+import { useTheme } from './composables/useTheme'
+import { useCases } from './composables/useCases'
+import { useNavigation } from './composables/useNavigation'
 
-// ... (原有变量保持不变) ...
 const authMode = ref('locked')
 const showOverlay = ref(true)
-const currentTab = ref('basics')
-const navIndicatorStyle = ref({ width: '0px', left: '0px' })
-const isJelly = ref(false)
-const isDark = ref(false)
-const casesData = ref([])
-const showCaseModal = ref(false)
-const modalMode = ref('view')
-const currentCase = ref(null) 
 const showKnowledge = ref(false)
 const currentKnowledgeItem = ref({})
-const navRefBasics = ref(null)
-const navRefCases = ref(null)
 const cardOriginRect = ref(null)
-const caseModalOriginRect = ref(null)
 
 const knowledgeItems = ref([
   { title: 'Linux', img: '/img/linux.png' },
@@ -40,83 +29,57 @@ const knowledgeItems = ref([
   { title: 'ITIL', img: '/img/people.png' }
 ])
 
-const toggleTheme = () => { isDark.value = !isDark.value }
-watch(isDark, (val) => { if (val) document.body.setAttribute('data-theme', 'dark'); else document.body.removeAttribute('data-theme') })
+const { isDark, initTheme, toggleTheme } = useTheme()
+const {
+  casesData,
+  showCaseModal,
+  modalMode,
+  currentCase,
+  caseModalOriginRect,
+  loadCases,
+  openCreateModal,
+  openViewModal,
+  handleCreateSubmit,
+  handleUpdateSubmit,
+  handleDeleteCase
+} = useCases()
 
-// ... (其他原有函数保持不变: handleUnlock, switchTab, updateNavIndicator, etc.) ...
-const handleUnlock = (mode) => { authMode.value = mode; showOverlay.value = false; if (mode === 'guest') switchTab('basics'); else if (mode === 'admin') switchTab('cases') }
-const switchTab = (tab) => { currentTab.value = tab; isJelly.value = false; nextTick(() => { isJelly.value = true; setTimeout(() => isJelly.value = false, 500); updateNavIndicator() }) }
-const updateNavIndicator = () => { const target = currentTab.value === 'basics' ? navRefBasics.value : navRefCases.value; if (target) { navIndicatorStyle.value = { width: `${target.offsetWidth}px`, left: `${target.offsetLeft}px` } } }
-const openKnowledgeCard = ({ item, rect }) => { currentKnowledgeItem.value = item; cardOriginRect.value = rect; showKnowledge.value = true }
-const switchKnowledgeItem = (newItem) => { currentKnowledgeItem.value = newItem }
-const openCreateModal = (event) => { if (event && event.currentTarget) { caseModalOriginRect.value = event.currentTarget.getBoundingClientRect() } modalMode.value = 'create'; currentCase.value = null; showCaseModal.value = true }
-const openViewModal = ({ item, rect }) => { caseModalOriginRect.value = rect; modalMode.value = 'view'; currentCase.value = item; showCaseModal.value = true }
-const handleAction = (action) => { if (action === 'switch-case') switchTab('cases') }
-const startX = ref(0)
-const onPointerDown = (e) => { startX.value = e.clientX }
-const onPointerUp = (e) => { const diff = e.clientX - startX.value; if (diff < -80) switchTab('cases'); if (diff > 80) switchTab('basics') }
+const {
+  currentTab,
+  navIndicatorStyle,
+  isJelly,
+  navRefBasics,
+  navRefCases,
+  switchTab,
+  onPointerDown,
+  onPointerUp
+} = useNavigation()
 
-const loadCases = async () => {
-  try {
-    const data = await api.getCases()
-    casesData.value = data
-  } catch (e) {
-    console.error('加载失败', e)
-    // showToast('Failed to load cases', 'error') // 可选
-  }
+const handleUnlock = (mode) => {
+  authMode.value = mode
+  showOverlay.value = false
+  if (mode === 'guest') switchTab('basics')
+  if (mode === 'admin') switchTab('cases')
 }
 
-// [修改 3] 新增工单 + 提示
-const handleCreateSubmit = async (newItem) => { 
-  const timeStr = newItem.created_at || ''
-  const newId = Number(timeStr.replace(/\D/g, '')) || Date.now()
-  const payload = { ...newItem, id: newId }
-  
-  casesData.value.unshift(payload) // 乐观更新
-  showCaseModal.value = false
-
-  try {
-    await api.createCase(payload)
-    showToast('Case created successfully!') // 成功提示
-  } catch (e) {
-    console.error('保存失败', e)
-    showToast('Failed to create case', 'error') // 失败提示
-    loadCases() // 回滚
-  }
+const openKnowledgeCard = ({ item, rect }) => {
+  currentKnowledgeItem.value = item
+  cardOriginRect.value = rect
+  showKnowledge.value = true
 }
 
-// [修改 4] 更新工单 + 提示
-const handleUpdateSubmit = async (updatedItem) => { 
-  const index = casesData.value.findIndex(c => c.id === updatedItem.id)
-  if (index !== -1) casesData.value[index] = updatedItem 
-  
-  try {
-    await api.updateCase(updatedItem.id, updatedItem)
-    showToast('Case updated!')
-  } catch (e) {
-    console.error('更新失败', e)
-    showToast('Failed to update case', 'error')
-    loadCases()
-  }
+const switchKnowledgeItem = (newItem) => {
+  currentKnowledgeItem.value = newItem
 }
 
-// [修改 5] 删除工单 + 提示
-const handleDeleteCase = async (id) => { 
-  casesData.value = casesData.value.filter(c => c.id !== id)
-  showCaseModal.value = false 
-  
-  try {
-    await api.deleteCase(id)
-    showToast('Case deleted')
-  } catch (e) {
-    console.error('删除失败', e)
-    showToast('Failed to delete case', 'error')
-    loadCases()
-  }
+const handleAction = (action) => {
+  if (action === 'switch-case') switchTab('cases')
 }
 
-onMounted(() => { loadCases(); nextTick(() => updateNavIndicator()); window.addEventListener('resize', updateNavIndicator) })
-onUnmounted(() => { window.removeEventListener('resize', updateNavIndicator) })
+onMounted(() => {
+  initTheme()
+  loadCases()
+})
 </script>
 
 <template>
